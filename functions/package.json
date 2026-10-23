@@ -1,0 +1,17 @@
+{
+  "name": "@living-community-assistant/functions",
+  "version": "0.0.1",
+  "private": true,
+  "type": "commonjs",
+  "main": "./main.cjs",
+  "engines": {
+    "node": "24"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.0.0",
+    "firebase-functions": "^7.2.5"
+  },
+  "devDependencies": {
+    "@living-community-assistant/types": "*"
+  }
+}

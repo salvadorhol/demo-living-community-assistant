@@ -1,0 +1,16 @@
+{
+  "name": "@living-community-assistant/types",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "@living-community-assistant/source": "./src/index.ts",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "nx": {
+    "name": "shared-types"
+  }
+}

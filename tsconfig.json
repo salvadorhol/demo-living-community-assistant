@@ -8,6 +8,12 @@
     },
     {
       "path": "./apps/living-community-assistant"
+    },
+    {
+      "path": "./functions"
+    },
+    {
+      "path": "./libs/shared/types"
     }
   ]
 }

@@ -49,3 +49,41 @@ vitest.config.*.timestamp*
 .vitest
 
 test-output
+
+# Local deployment configuration and Firebase artifacts
+.env
+.env.*
+!.env.example
+!.env.*.example
+functions/.env.local
+functions/.env.prod
+apps/living-community-assistant/src/environments/environment.local.ts
+apps/living-community-assistant/src/environments/environment.prod.ts
+.firebase/
+.firebase.deploy.*.json
+.firebase.smoke.*.json
+firebase-emulator-data/
+.secret.local
+firebase-debug*.log
+ui-debug.log
+*.log
+*.log.*
+
+# Terraform local state, plans, and variables (commit .terraform.lock.hcl)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+*.tfplan
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+*.tsbuildinfo
+playwright-report/
+test-results/

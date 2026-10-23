@@ -1,0 +1,96 @@
+{
+  "name": "functions",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "functions/src",
+  "projectType": "application",
+  "targets": {
+    "deploy": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build"],
+      "options": {
+        "command": "node tools/deploy.mjs functions",
+        "tty": true
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "dependsOn": ["build"],
+      "options": {
+        "commands": [
+          "firebase emulators:start --only auth,firestore,functions --project demo-living-community-assistant",
+          "npx nx watch --projects=functions --includeDependencies -- npx nx build functions"
+        ],
+        "parallel": true
+      }
+    },
+    "bundle": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["^build", "typecheck"],
+      "inputs": [
+        "production",
+        "^production",
+        "{workspaceRoot}/.nvmrc",
+        "{workspaceRoot}/functions/project.json"
+      ],
+      "outputs": ["{workspaceRoot}/dist/functions"],
+      "options": {
+        "command": "esbuild functions/src/main.ts --bundle --platform=node --target=node24 --packages=external --format=cjs --outfile=dist/functions/main.cjs --sourcemap"
+      }
+    },
+    "prune-lockfile": {
+      "executor": "@nx/js:prune-lockfile",
+      "dependsOn": ["bundle"],
+      "cache": true,
+      "inputs": [
+        "production",
+        "^production",
+        "{workspaceRoot}/package-lock.json"
+      ],
+      "outputs": [
+        "{workspaceRoot}/dist/functions/package.json",
+        "{workspaceRoot}/dist/functions/package-lock.json"
+      ],
+      "options": {
+        "buildTarget": "bundle"
+      }
+    },
+    "build": {
+      "executor": "nx:noop",
+      "dependsOn": ["package"]
+    },
+    "package": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["prune-lockfile"],
+      "cache": true,
+      "inputs": [
+        "production",
+        "^production",
+        "{workspaceRoot}/package-lock.json",
+        "{workspaceRoot}/.nvmrc",
+        "{workspaceRoot}/firebase.json",
+        "{workspaceRoot}/tools/package-functions.mjs",
+        "{workspaceRoot}/tools/config.mjs",
+        "{workspaceRoot}/tools/process.mjs"
+      ],
+      "outputs": [
+        "{workspaceRoot}/dist/functions/package.json",
+        "{workspaceRoot}/dist/functions/package-lock.json"
+      ],
+      "options": {
+        "command": "node tools/package-functions.mjs"
+      }
+    },
+    "smoke": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build"],
+      "options": {
+        "command": "node tools/smoke-emulators.mjs"
+      }
+    }
+  }
+}

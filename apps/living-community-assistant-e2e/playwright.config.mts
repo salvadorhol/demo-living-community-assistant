@@ -2,11 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 import { nxE2EPreset } from '@nx/playwright/preset';
 import { getReadyUrl, workspaceRoot } from '@nx/devkit';
 
-const isCI = !!process.env['CI'];
 // getReadyUrl moves the address to the port the server task reported.
-const webServerAddress = getReadyUrl(
-  isCI ? 'http://localhost:4300' : 'http://localhost:4200',
-);
+const webServerAddress = getReadyUrl('http://localhost:4200');
 
 // For CI, you may want to set BASE_URL to the deployed application.
 const baseURL = process.env['BASE_URL'] || webServerAddress;
@@ -36,9 +33,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: isCI
-      ? 'npx nx run @living-community-assistant/living-community-assistant:preview'
-      : 'npx nx run @living-community-assistant/living-community-assistant:dev',
+    command: 'npx nx run living-community-assistant:local-emulator',
+    timeout: 180_000,
     url: webServerAddress,
     reuseExistingServer: true,
     cwd: workspaceRoot,

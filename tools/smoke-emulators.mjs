@@ -1,0 +1,45 @@
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { workspaceRoot } from './config.mjs';
+import { run } from './process.mjs';
+
+const require = createRequire(import.meta.url);
+const configPath = resolve(
+  workspaceRoot,
+  `.firebase.smoke.${process.pid}.json`,
+);
+const config = JSON.parse(
+  readFileSync(resolve(workspaceRoot, 'firebase.json'), 'utf8'),
+);
+for (const [service, port] of Object.entries({
+  functions: 5101,
+  firestore: 8180,
+  auth: 9190,
+  hub: 4501,
+  logging: 4601,
+})) {
+  config.emulators[service] = { host: '127.0.0.1', port };
+}
+config.emulators.firestore.websocketPort = 9250;
+config.emulators.ui.enabled = false;
+try {
+  writeFileSync(configPath, JSON.stringify(config));
+  run(
+    process.execPath,
+    [
+      require.resolve('firebase-tools/lib/bin/firebase.js'),
+      'emulators:exec',
+      '--only',
+      'auth,firestore,functions',
+      '--project',
+      'demo-living-community-assistant',
+      '--config',
+      configPath,
+      'node tools/smoke-health.mjs',
+    ],
+    { cwd: workspaceRoot },
+  );
+} finally {
+  rmSync(configPath, { force: true });
+}

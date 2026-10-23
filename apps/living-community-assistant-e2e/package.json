@@ -4,7 +4,7 @@
   "private": true,
   "nx": {
     "implicitDependencies": [
-      "@living-community-assistant/living-community-assistant"
+      "living-community-assistant"
     ]
   }
 }

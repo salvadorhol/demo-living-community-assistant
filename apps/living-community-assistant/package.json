@@ -1,5 +1,43 @@
 {
   "name": "@living-community-assistant/living-community-assistant",
   "version": "0.0.1",
-  "private": true
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@living-community-assistant/types": "*",
+    "firebase": "^13.1.0"
+  },
+  "nx": {
+    "name": "living-community-assistant",
+    "targets": {
+      "build": {
+        "cache": false
+      },
+      "local-emulator": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "continuous": true,
+        "options": {
+          "commands": [
+            "npx nx run functions:serve",
+            "npx vite --config apps/living-community-assistant/vite.config.mts --mode local-emulator"
+          ],
+          "parallel": true
+        }
+      },
+      "deploy": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "dependsOn": [
+          "typecheck",
+          "build"
+        ],
+        "options": {
+          "command": "node tools/deploy.mjs hosting",
+          "cwd": "{workspaceRoot}",
+          "tty": true
+        }
+      }
+    }
+  }
 }

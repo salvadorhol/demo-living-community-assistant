@@ -1,51 +1,42 @@
-// Uncomment this line to use CSS modules
-// import styles from './app.module.scss';
-import NxWelcome from './nx-welcome';
-
-import { Route, Routes, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { checkHealth } from './api/health';
+import styles from './app.module.scss';
 
 export function App() {
-  return (
-    <div>
-      <NxWelcome title="@living-community-assistant/living-community-assistant" />
+  const [status, setStatus] = useState('Ready to check backend connectivity.');
+  const [loading, setLoading] = useState(false);
 
-      {/* START: routes */}
-      {/* These routes and navigation have been generated for you */}
-      {/* Feel free to move and update them to fit your needs */}
-      <br />
-      <hr />
-      <br />
-      <nav>
-        <ul>
-          <li>
-            <Link to="/">Home</Link>
-          </li>
-          <li>
-            <Link to="/page-2">Page 2</Link>
-          </li>
-        </ul>
-      </nav>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <div>
-              This is the generated root route.{' '}
-              <Link to="/page-2">Click here for page 2.</Link>
-            </div>
-          }
-        />
-        <Route
-          path="/page-2"
-          element={
-            <div>
-              <Link to="/">Click here to go back to root page.</Link>
-            </div>
-          }
-        />
-      </Routes>
-      {/* END: routes */}
-    </div>
+  async function check() {
+    setLoading(true);
+    setStatus('Checking backend…');
+    try {
+      const result = await checkHealth();
+      setStatus(
+        `Backend ${result.status} · ${new Date(result.time).toLocaleTimeString()}`,
+      );
+    } catch {
+      setStatus(
+        'Backend unavailable. Check that your backend is running and configured.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className={styles['page']}>
+      <p className={styles['eyebrow']}>Development workspace</p>
+      <h1>Living Community Assistant</h1>
+      <p>Your workspace is ready for development.</p>
+      <section aria-labelledby="backend-title">
+        <h2 id="backend-title">Backend connectivity</h2>
+        <p>Check the connection to your configured backend.</p>
+        <button onClick={check} disabled={loading}>
+          {loading ? 'Checking…' : 'Check backend'}
+        </button>
+        <p role="status">{status}</p>
+      </section>
+    </main>
   );
 }
 
