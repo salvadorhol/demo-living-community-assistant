@@ -1,5 +1,5 @@
-import { ConfigurationError } from './configuration-error.ts';
-import { createLogger } from './logger.ts';
+import { ConfigurationError } from '../configuration-error.ts';
+import { createLogger } from '../logger.ts';
 import type { AddressInfo } from 'node:net';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { io, type Socket } from 'socket.io-client';
@@ -8,8 +8,8 @@ import type {
   ServerToClientEvents,
   AudioOutputEvent,
 } from '@living-community-assistant/types';
-import { createSocketServer } from './server.ts';
-import type { VoiceAgentFactory } from './conversation.ts';
+import { createSocketServer } from '../server.ts';
+import type { VoiceAgentFactory } from '../ai/contracts.ts';
 
 const format = { encoding: 'pcm16le', sampleRate: 24000, channels: 1 } as const;
 function fixture() {
@@ -248,13 +248,11 @@ it('surfaces a recoverable reply warning without finalizing the call', async () 
   expect(await warning).toMatchObject({ code: 'VOICE_OUTPUT_LIMIT' });
   expect(agents[0].dispose).not.toHaveBeenCalled();
   expect(
-    await socket
-      .timeout(1000)
-      .emitWithAck('audio:input:chunk', {
-        streamId: 'warning',
-        sequence: 0,
-        data: new Uint8Array(1920),
-      }),
+    await socket.timeout(1000).emitWithAck('audio:input:chunk', {
+      streamId: 'warning',
+      sequence: 0,
+      data: new Uint8Array(1920),
+    }),
   ).toEqual({ ok: true });
 });
 it('catches factory configuration exceptions and surfaces safe event and acknowledgement errors', async () => {

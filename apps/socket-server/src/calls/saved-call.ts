@@ -1,4 +1,4 @@
-import { silentLogger, type AppLogger } from './logger.ts';
+import { silentLogger, type AppLogger } from '../logger.ts';
 import { randomUUID } from 'node:crypto';
 import type {
   CallStatus,
@@ -6,7 +6,6 @@ import type {
 } from '@living-community-assistant/types';
 import { CallRecording } from './recording.ts';
 import { retry, type CallStore } from './call-store.ts';
-import { AGENT_CONFIG } from './agent-config.ts';
 
 export class SavedCall {
   readonly id = randomUUID();
@@ -24,6 +23,7 @@ export class SavedCall {
   private cleanupTimer?: ReturnType<typeof setTimeout>;
   state: CallStatus['state'] = 'active';
   readonly uid: string;
+  private models: Readonly<Record<string, string>>;
   private logger: AppLogger;
   private store: CallStore | undefined;
   private emit: (status: CallStatus) => void;
@@ -34,8 +34,10 @@ export class SavedCall {
     emit: (status: CallStatus) => void,
     transcript: (value: TranscriptUpdate) => void,
     logger: AppLogger = silentLogger,
+    modelMetadata: Readonly<Record<string, string>> = {},
   ) {
     this.logger = logger.child({ callId: this.id, component: 'call' });
+    this.models = modelMetadata;
     this.uid = uid;
     this.store = store;
     this.emit = emit;
@@ -78,8 +80,7 @@ export class SavedCall {
           ...authentication,
           status: 'active',
           recordingStatus: 'pending',
-          model: AGENT_CONFIG.model,
-          transcriptionModel: AGENT_CONFIG.transcriptionModel,
+          ...this.models,
           startedAt: new Date().toISOString(),
         }),
       'start',

@@ -1,11 +1,12 @@
 /** Playwright-only entrypoint. Exercises the real adapter against a local fake OpenAI WebSocket. */
-import { WebSocketServer, WebSocket } from 'ws';
+import { createFakeOpenAI } from './testing/fake-openai.ts';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import type { AddressInfo } from 'node:net';
-import { firebaseCallStore } from './call-store.ts';
-import { withTranscription } from './transcription.ts';
-import { createOpenAIAudio } from './openai-audio.ts';
+import { firebaseCallStore } from './calls/firebase-call-store.ts';
+import { createTranscriptionSession } from './ai/openai/transcription-session.ts';
+import { createVoiceAgent } from './ai/create-agent.ts';
+import { ASSISTANT_PROFILE } from './ai/assistant-profile.ts';
+import { createRealtimeVoice } from './ai/openai/realtime-session.ts';
 import { createSocketServer } from './server.ts';
 import { readConfig } from './config.ts';
 
@@ -22,116 +23,15 @@ const firebase = initializeApp({
   projectId: config.firebaseProjectId,
   storageBucket: 'demo-living-community-assistant.firebasestorage.app',
 });
-const upstream = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-await new Promise<void>((resolve) => upstream.once('listening', resolve));
-upstream.on('connection', (socket) => {
-  let turn = 0;
-  let transcription = false;
-  let transcribing = false;
-  let active = false;
-  let responded = false;
-  socket.on('message', (data) => {
-    const event = JSON.parse(data.toString());
-    if (
-      event.type === 'session.update' &&
-      event.session.type === 'transcription'
-    ) {
-      transcription = true;
-      socket.send(JSON.stringify({ type: 'session.updated' }));
-      return;
-    }
-    if (transcription) {
-      if (event.type === 'input_audio_buffer.append' && !transcribing) {
-        transcribing = true;
-        turn++;
-        socket.send(
-          JSON.stringify({
-            type: 'conversation.item.input_audio_transcription.delta',
-            item_id: `user-${turn}`,
-            content_index: 0,
-            delta: 'Hello from the resident.',
-          }),
-        );
-      }
-      if (event.type === 'input_audio_buffer.commit' && transcribing) {
-        socket.send(
-          JSON.stringify({
-            type: 'conversation.item.input_audio_transcription.completed',
-            item_id: `user-${turn}`,
-            content_index: 0,
-            transcript: 'Hello from the resident.',
-          }),
-        );
-        transcribing = false;
-      }
-      return;
-    }
-    if (event.type === 'session.update') {
-      active = Boolean(event.session.audio?.input?.turn_detection);
-      if (active) responded = false;
-      socket.send(JSON.stringify({ type: 'session.updated' }));
-    }
-    if (event.type === 'input_audio_buffer.append' && active && !responded) {
-      responded = true;
-      const id = `fixture-${++turn}`;
-      socket.send(
-        JSON.stringify({ type: 'response.created', response: { id } }),
-      );
-      for (const type of [
-        'response.output_audio_transcript.delta',
-        'response.output_audio_transcript.done',
-      ])
-        socket.send(
-          JSON.stringify({
-            type,
-            response_id: id,
-            item_id: id,
-            content_index: 0,
-            delta: 'Hello! How can I help?',
-            transcript: 'Hello! How can I help?',
-          }),
-        );
-      // A short audible tone tests real browser scheduling without cloud calls.
-      const pcm = Buffer.alloc(19200);
-      for (let i = 0; i < pcm.length / 2; i++)
-        pcm.writeInt16LE(
-          Math.round(Math.sin((i * 2 * Math.PI * 440) / 24000) * 2000),
-          i * 2,
-        );
-      socket.send(
-        JSON.stringify({
-          type: 'response.output_audio.delta',
-          response_id: id,
-          item_id: id,
-          content_index: 0,
-          delta: pcm.toString('base64'),
-        }),
-      );
-      socket.send(
-        JSON.stringify({ type: 'response.output_audio.done', item_id: id }),
-      );
-      socket.send(
-        JSON.stringify({
-          type: 'response.done',
-          response: { id, status: 'completed' },
-        }),
-      );
-    }
-  });
+const upstream = await createFakeOpenAI();
+const connect = upstream.connect;
+const provider = createVoiceAgent({
+  voice: createRealtimeVoice('fixture-key', connect),
+  transcription: (context) =>
+    createTranscriptionSession(context, 'fixture-key', connect),
+  metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },
 });
-const connect = () =>
-  new WebSocket(`ws://127.0.0.1:${(upstream.address() as AddressInfo).port}`);
-const provider = withTranscription(
-  createOpenAIAudio(
-    'fixture-key',
-    () =>
-      new WebSocket(
-        `ws://127.0.0.1:${(upstream.address() as AddressInfo).port}`,
-      ),
-  ),
-  'fixture-key',
-  connect,
-);
+
 const server = createSocketServer(
   config,
   (token) => getAuth(firebase).verifyIdToken(token),
@@ -144,7 +44,7 @@ const server = createSocketServer(
 server.httpServer.listen(config.port, config.host);
 async function shutdown() {
   await server.close();
-  upstream.close();
+  await upstream.close();
 }
 process.once('SIGINT', () => {
   void shutdown();

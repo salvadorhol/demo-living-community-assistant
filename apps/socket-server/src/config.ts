@@ -1,5 +1,4 @@
 import { ConfigurationError } from './configuration-error.ts';
-import { readOutputQueueMs } from './agent-config.ts';
 export interface ServerConfig {
   firebaseProjectId: string;
   storageBucket?: string;
@@ -82,4 +81,25 @@ export function readConfig(
     maxCallMs,
     voiceOutputQueueMs: readOutputQueueMs(env.VOICE_OUTPUT_QUEUE_MS),
   };
+}
+
+export const VOICE_LIMITS = {
+  setupTimeoutMs: 10_000,
+  maxQueuedBytes: 24_000,
+  maxOutputQueueMs: 60_000,
+  controlTimeoutMs: 2_000,
+} as const;
+export function readOpenAIKey(env: NodeJS.ProcessEnv = process.env) {
+  return env.OPENAI_API_KEY?.trim();
+}
+
+export function readOutputQueueMs(
+  value: string | number = VOICE_LIMITS.maxOutputQueueMs,
+): number {
+  const duration = Number(value);
+  if (!Number.isSafeInteger(duration) || duration < 1000 || duration > 120_000)
+    throw new ConfigurationError(
+      'VOICE_OUTPUT_QUEUE_MS must be an integer between 1000 and 120000.',
+    );
+  return duration;
 }

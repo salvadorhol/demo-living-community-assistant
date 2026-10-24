@@ -7,7 +7,7 @@ import type {
   ClientToServerEvents,
   ServerToClientEvents,
 } from '@living-community-assistant/types';
-import { createSocketServer } from './server.ts';
+import { createSocketServer } from '../server.ts';
 
 it.each(['websocket', 'polling'] as const)(
   'echoes exact PCM over %s, completes on Stop, and clears on cancellation',
@@ -49,13 +49,11 @@ it.each(['websocket', 'polling'] as const)(
         const echoed = new Promise<AudioChunk>((resolve) =>
           socket.once('audio:output:chunk', resolve),
         );
-        await socket
-          .timeout(1000)
-          .emitWithAck('audio:input:chunk', {
-            streamId: 'echo',
-            sequence,
-            data,
-          });
+        await socket.timeout(1000).emitWithAck('audio:input:chunk', {
+          streamId: 'echo',
+          sequence,
+          data,
+        });
         const result = await echoed;
         expect(result.streamId).toBe('echo');
         expect(result.sequence).toBe(sequence);

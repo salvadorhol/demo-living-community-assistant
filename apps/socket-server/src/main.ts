@@ -5,9 +5,11 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { readConfig } from './config.ts';
 import { createSocketServer } from './server.ts';
-import { withTranscription } from './transcription.ts';
-import { firebaseCallStore } from './call-store.ts';
-import { createOpenAIAudio } from './openai-audio.ts';
+import { createTranscriptionSession } from './ai/openai/transcription-session.ts';
+import { createVoiceAgent } from './ai/create-agent.ts';
+import { ASSISTANT_PROFILE } from './ai/assistant-profile.ts';
+import { firebaseCallStore } from './calls/firebase-call-store.ts';
+import { createRealtimeVoice } from './ai/openai/realtime-session.ts';
 
 // A JSON fallback keeps invalid logging configuration visible.
 let logger;
@@ -35,11 +37,13 @@ try {
   const server = createSocketServer(
     config,
     (token) => getAuth(firebase).verifyIdToken(token),
-    withTranscription(
-      createOpenAIAudio(undefined, undefined, {
+    createVoiceAgent({
+      voice: createRealtimeVoice(undefined, undefined, {
         maxOutputQueueMs: config.voiceOutputQueueMs,
       }),
-    ),
+      transcription: (context) => createTranscriptionSession(context),
+      metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },
+    }),
     firebaseCallStore(firebase, config.storageBucket),
     config.maxCallMs,
     logger,

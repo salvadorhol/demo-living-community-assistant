@@ -10,9 +10,15 @@ import type {
   ServerToClientEvents,
   HealthResponse,
 } from '@living-community-assistant/types';
-import { attachAudio, echoAudio, type AudioSessionFactory } from './audio.ts';
-import type { CallStore } from './call-store.ts';
-import { attachConversation, type VoiceAgentFactory } from './conversation.ts';
+import {
+  attachAudio,
+  echoAudio,
+  type AudioSessionFactory,
+} from './transport/audio.ts';
+import type { CallStore } from './calls/call-store.ts';
+import { attachConversation } from './transport/socket-conversation.ts';
+import type { VoiceAgentFactory } from './ai/contracts.ts';
+import type { TranscriptObserverFactory } from './conversation/transcript-observer.ts';
 import type { ServerConfig } from './config.ts';
 
 function health(): HealthResponse {
@@ -26,6 +32,7 @@ export function createSocketServer(
   callStore?: CallStore,
   maxCallMs?: number,
   logger: AppLogger = silentLogger,
+  observerFactory?: TranscriptObserverFactory,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -128,6 +135,7 @@ export function createSocketServer(
             : { authTime: socket.data.authTime }),
         },
         log.child({ roomId: session.roomId }),
+        observerFactory,
       );
       finishers.add(finish);
       socket.once('disconnect', () => {

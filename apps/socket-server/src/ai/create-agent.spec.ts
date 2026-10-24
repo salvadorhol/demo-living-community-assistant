@@ -1,8 +1,9 @@
-import { createLogger } from './logger.ts';
+import { createLogger } from '../logger.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
-import type { VoiceAgentFactory } from './conversation.ts';
-import { withTranscription } from './transcription.ts';
+import type { VoiceAgentFactory } from './contracts.ts';
+import { createTranscriptionSession } from './openai/transcription-session.ts';
+import { createVoiceAgent } from './create-agent.ts';
 class Upstream extends EventEmitter {
   readyState = 1;
   bufferedAmount = 0;
@@ -38,11 +39,15 @@ function setup() {
   });
   const transcript = vi.fn();
   const degraded = vi.fn();
-  const factory = withTranscription(
-    { kind: 'conversation', create },
-    'test-key',
-    () => upstream as unknown as WebSocket,
-  );
+  const factory = createVoiceAgent({
+    voice: { kind: 'conversation', create },
+    transcription: (context) =>
+      createTranscriptionSession(
+        context,
+        'test-key',
+        () => upstream as unknown as WebSocket,
+      ),
+  });
   const agent = factory.create({
     uid: 'owner',
     logger,
@@ -92,6 +97,8 @@ it('streams user partials before committing, commits on voice turn boundaries, a
   });
   expect(f.transcript).toHaveBeenLastCalledWith({
     id: 'user-one-0',
+    providerItemId: 'one',
+    source: 'transcription',
     role: 'user',
     text: 'Hel',
     isFinal: false,

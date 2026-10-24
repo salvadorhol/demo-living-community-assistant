@@ -6,7 +6,7 @@ import type {
   ClientToServerEvents,
   ServerToClientEvents,
 } from '@living-community-assistant/types';
-import { createSocketServer } from './server.ts';
+import { createSocketServer } from '../server.ts';
 import type { AudioSessionFactory } from './audio.ts';
 
 let server: ReturnType<typeof createSocketServer>;

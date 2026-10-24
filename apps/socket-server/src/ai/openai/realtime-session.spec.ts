@@ -1,9 +1,10 @@
-import { createLogger } from './logger.ts';
+import { VOICE_LIMITS } from '../../config.ts';
+import { createLogger } from '../../logger.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import type { AudioOutputEvent } from '@living-community-assistant/types';
-import { createOpenAIAudio } from './openai-audio.ts';
-import { AGENT_CONFIG } from './agent-config.ts';
+import { createRealtimeVoice } from './realtime-session.ts';
+import { ASSISTANT_PROFILE } from '../assistant-profile.ts';
 
 class Upstream extends EventEmitter {
   readyState = 1;
@@ -30,7 +31,7 @@ function setup(
   const upstream = new Upstream();
   const connect = vi.fn(() => upstream as unknown as WebSocket);
   const events: AudioOutputEvent[] = [];
-  const factory = createOpenAIAudio(key, connect, { maxOutputQueueMs });
+  const factory = createRealtimeVoice(key, connect, { maxOutputQueueMs });
   const agent = factory.create({
     uid: 'private-user',
     logger,
@@ -49,8 +50,8 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 it('centralizes models and accepts the legacy key only as a fallback', () => {
-  expect(AGENT_CONFIG.model).toBe('gpt-realtime-2.1-mini');
-  expect(AGENT_CONFIG.transcriptionModel).toBe('gpt-live-transcribe');
+  expect(ASSISTANT_PROFILE.model).toBe('gpt-realtime-2.1-mini');
+  expect(ASSISTANT_PROFILE.transcriptionModel).toBe('gpt-live-transcribe');
 });
 
 it('waits for configuration and keeps credentials and hashed identity server-side', async () => {
@@ -64,7 +65,7 @@ it('waits for configuration and keeps credentials and hashed identity server-sid
   await Promise.resolve();
   expect(ready).toBe(false);
   expect(connect).toHaveBeenCalledWith(
-    expect.stringContaining(AGENT_CONFIG.model),
+    expect.stringContaining(ASSISTANT_PROFILE.model),
     {
       headers: {
         Authorization: 'Bearer test-key',
@@ -75,7 +76,7 @@ it('waits for configuration and keeps credentials and hashed identity server-sid
   expect(upstream.sent[0]).toMatchObject({
     type: 'session.update',
     session: {
-      instructions: AGENT_CONFIG.instructions,
+      instructions: ASSISTANT_PROFILE.instructions,
       audio: { input: { turn_detection: null }, output: { voice: 'marin' } },
     },
   });
@@ -84,7 +85,7 @@ it('waits for configuration and keeps credentials and hashed identity server-sid
   agent.beginInput();
   expect(upstream.sent.at(-1)).toMatchObject({
     session: {
-      audio: { input: { turn_detection: AGENT_CONFIG.turnDetection } },
+      audio: { input: { turn_detection: ASSISTANT_PROFILE.turnDetection } },
     },
   });
   agent.dispose();
@@ -265,7 +266,7 @@ it('rejects missing credentials and bounds upstream backpressure', async () => {
   missing.agent.dispose();
   const { agent, upstream, initialize } = setup();
   await initialize();
-  upstream.bufferedAmount = AGENT_CONFIG.maxQueuedBytes + 1;
+  upstream.bufferedAmount = VOICE_LIMITS.maxQueuedBytes + 1;
   expect(() => agent.write(new Uint8Array(1920))).toThrow('backlog');
   agent.dispose();
 });
@@ -355,7 +356,7 @@ it.each([false, true])(
 
 it('rejects queue configuration before opening a connection', () => {
   expect(() =>
-    createOpenAIAudio('key', vi.fn(), { maxOutputQueueMs: -1 }),
+    createRealtimeVoice('key', vi.fn(), { maxOutputQueueMs: -1 }),
   ).toThrow(/VOICE_OUTPUT_QUEUE_MS/);
 });
 
@@ -403,3 +404,194 @@ it.each([false, true])(
     f.agent.dispose();
   },
 );
+
+function controls(f: ReturnType<typeof setup>) {
+  const { redirectResponse, interruptResponse } = f.agent;
+  if (!redirectResponse || !interruptResponse)
+    throw new Error('Expected controllable voice provider');
+  return { redirectResponse, interruptResponse };
+}
+
+function reply(f: ReturnType<typeof setup>, id = 'controlled') {
+  f.upstream.event({ type: 'response.created', response: { id } });
+  f.upstream.event({
+    type: 'response.output_audio.delta',
+    response_id: id,
+    item_id: id,
+    content_index: 0,
+    delta: Buffer.alloc(9600).toString('base64'),
+  });
+}
+const flushControls = async () => {
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+};
+
+it('waits for cancellation and truncation before creating one corrective reply', async () => {
+  const f = setup();
+  await f.initialize();
+  reply(f);
+  const result = controls(f).redirectResponse(
+    'controlled',
+    'Give a brief answer within community scope.',
+    new AbortController().signal,
+  );
+  await flushControls();
+  expect(f.upstream.sent).toContainEqual({
+    type: 'response.cancel',
+    response_id: 'controlled',
+  });
+  expect(f.events.at(-1)?.type).toBe('clear');
+  expect(
+    f.upstream.sent.some((event) => event.type === 'response.create'),
+  ).toBe(false);
+  f.upstream.event({
+    type: 'response.done',
+    response: { id: 'controlled', status: 'cancelled' },
+  });
+  await vi.advanceTimersByTimeAsync(250);
+  expect(f.upstream.sent.at(-1)).toMatchObject({
+    type: 'conversation.item.truncate',
+    item_id: 'controlled',
+  });
+  expect(
+    f.upstream.sent.some((event) => event.type === 'response.create'),
+  ).toBe(false);
+  f.upstream.event({
+    type: 'conversation.item.truncated',
+    item_id: 'controlled',
+    content_index: 0,
+  });
+  await flushControls();
+  const requests = f.upstream.sent.filter(
+    (event) => event.type === 'response.create',
+  );
+  expect(requests).toHaveLength(1);
+  const response = requests[0].response as {
+    instructions: string;
+    metadata: Record<string, string>;
+  };
+  expect(response.instructions).toContain(ASSISTANT_PROFILE.instructions);
+  expect(response.instructions).toContain(
+    'Give a brief answer within community scope.',
+  );
+  f.upstream.event({
+    type: 'response.created',
+    response: { id: 'replacement', metadata: response.metadata },
+  });
+  expect(await result).toBe(true);
+  expect(f.agent.currentResponseId?.()).toBe('replacement');
+  expect(
+    f.upstream.sent
+      .filter((event) => event.type === 'session.update')
+      .some((event) => JSON.stringify(event).includes('Give a brief answer')),
+  ).toBe(false);
+  f.agent.dispose();
+});
+
+it('can interrupt already-generated audio while leaving the conversation open', async () => {
+  const f = setup();
+  await f.initialize();
+  reply(f);
+  f.upstream.event({
+    type: 'response.output_audio.done',
+    item_id: 'controlled',
+  });
+  f.upstream.event({
+    type: 'response.done',
+    response: { id: 'controlled', status: 'completed' },
+  });
+  const result = controls(f).interruptResponse(
+    'controlled',
+    new AbortController().signal,
+  );
+  await flushControls();
+  await vi.advanceTimersByTimeAsync(250);
+  f.upstream.event({
+    type: 'conversation.item.truncated',
+    item_id: 'controlled',
+    content_index: 0,
+  });
+  expect(await result).toBe(true);
+  expect(
+    f.upstream.sent.some((event) => event.type === 'response.cancel'),
+  ).toBe(false);
+  expect(f.upstream.terminate).not.toHaveBeenCalled();
+  expect(
+    await controls(f).interruptResponse(
+      'controlled',
+      new AbortController().signal,
+    ),
+  ).toBe(false);
+  f.agent.dispose();
+});
+
+it.each([
+  'signal',
+  'before-send',
+  'speech',
+  'response',
+  'pause',
+  'dispose',
+] as const)(
+  'abandons pending redirection on %s without reviving speech',
+  async (action) => {
+    const f = setup();
+    await f.initialize();
+    reply(f);
+    const owner = new AbortController();
+    const result = controls(f).redirectResponse(
+      'controlled',
+      'Stay on topic',
+      owner.signal,
+    );
+    if (action === 'before-send') owner.abort();
+    await flushControls();
+    if (action === 'signal') owner.abort();
+    if (action === 'speech')
+      f.upstream.event({ type: 'input_audio_buffer.speech_started' });
+    if (action === 'response')
+      f.upstream.event({
+        type: 'response.created',
+        response: { id: 'superseding' },
+      });
+    if (action === 'pause') f.agent.pause();
+    if (action === 'dispose') f.agent.dispose();
+    expect(await result).toBe(false);
+    f.upstream.event({
+      type: 'response.done',
+      response: { id: 'controlled', status: 'cancelled' },
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    f.upstream.event({
+      type: 'conversation.item.truncated',
+      item_id: 'controlled',
+      content_index: 0,
+    });
+    expect(
+      f.upstream.sent.some((event) => event.type === 'response.create'),
+    ).toBe(false);
+    f.agent.dispose();
+  },
+);
+
+it('bounds control acknowledgements and surfaces timeout as a provider failure', async () => {
+  const f = setup();
+  await f.initialize();
+  reply(f);
+  const result = controls(f).redirectResponse(
+    'controlled',
+    'Stay on topic',
+    new AbortController().signal,
+  );
+  await flushControls();
+  await vi.advanceTimersByTimeAsync(2001);
+  expect(await result).toBe(false);
+  expect(f.events.at(-1)).toMatchObject({
+    type: 'error',
+    error: { code: 'VOICE_UNAVAILABLE' },
+  });
+  expect(
+    f.upstream.sent.some((event) => event.type === 'response.create'),
+  ).toBe(false);
+  f.agent.dispose();
+});
