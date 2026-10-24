@@ -17,14 +17,20 @@ export async function deploy(
     firebaseCli = require.resolve('firebase-tools/lib/bin/firebase.js'),
   } = {},
 ) {
-  if (!['hosting', 'functions'].includes(target)) {
-    throw new Error('Usage: node tools/deploy.mjs <hosting|functions>');
+  if (!['hosting', 'functions', 'rules'].includes(target)) {
+    throw new Error('Usage: node tools/deploy.mjs <hosting|functions|rules>');
   }
   const major = assertRuntime(root);
   const { projectId, siteId } = await config({ root });
   const firebase = JSON.parse(
     readFileSync(resolve(root, 'firebase.json'), 'utf8'),
   );
+  firebase.storage = {
+    ...firebase.storage,
+    bucket:
+      process.env.FIREBASE_STORAGE_BUCKET?.trim() ||
+      `${projectId}-call-recordings`,
+  };
   if (target === 'hosting') {
     const output = resolve(root, firebase.hosting.public);
     if (
@@ -62,7 +68,7 @@ export async function deploy(
       );
     }
     firebase.hosting.site = siteId;
-  } else {
+  } else if (target === 'functions') {
     const output = resolve(root, firebase.functions[0].source);
     if (!existsSync(resolve(output, 'package.json'))) {
       throw new Error('Functions artifact is missing. Run nx build functions.');
@@ -93,9 +99,11 @@ export async function deploy(
         firebaseCli,
         'deploy',
         '--only',
-        target === 'functions'
-          ? 'firestore:rules,firestore:indexes,functions'
-          : 'hosting',
+        target === 'rules'
+          ? 'firestore:rules,firestore:indexes,storage'
+          : target === 'functions'
+            ? 'firestore:rules,firestore:indexes,storage,functions'
+            : 'hosting',
         '--project',
         projectId,
         '--config',

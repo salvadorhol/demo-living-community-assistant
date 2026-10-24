@@ -132,7 +132,7 @@ for (const target of ['hosting', 'functions']) {
           '--only',
           target === 'hosting'
             ? 'hosting'
-            : 'firestore:rules,firestore:indexes,functions',
+            : 'firestore:rules,firestore:indexes,storage,functions',
           '--project',
           'example-project',
         ]);

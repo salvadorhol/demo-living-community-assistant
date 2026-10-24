@@ -16,6 +16,7 @@ for (const [service, port] of Object.entries({
   functions: 5101,
   firestore: 8180,
   auth: 9190,
+  storage: 9298,
   hub: 4501,
   logging: 4601,
 })) {
@@ -31,12 +32,12 @@ try {
       require.resolve('firebase-tools/lib/bin/firebase.js'),
       'emulators:exec',
       '--only',
-      'auth,firestore,functions',
+      'auth,firestore,functions,storage',
       '--project',
       'demo-living-community-assistant',
       '--config',
       configPath,
-      'node tools/smoke-health.mjs',
+      'node tools/smoke-health.mjs && node tools/test-call-security.mjs',
     ],
     { cwd: workspaceRoot },
   );
