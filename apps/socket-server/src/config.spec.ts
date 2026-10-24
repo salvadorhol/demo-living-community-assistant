@@ -2,7 +2,10 @@ import { readConfig } from './config.ts';
 
 describe('server configuration', () => {
   it('works without cloud credentials or an environment file', () => {
-    expect(readConfig({})).toEqual({
+    expect(
+      readConfig({ FIREBASE_PROJECT_ID: 'demo-living-community-assistant' }),
+    ).toEqual({
+      firebaseProjectId: 'demo-living-community-assistant',
       host: '127.0.0.1',
       port: 3000,
       allowedOrigins: ['http://localhost:4200', 'http://127.0.0.1:4200'],
@@ -12,11 +15,13 @@ describe('server configuration', () => {
   it('accepts an explicit listener and browser origins', () => {
     expect(
       readConfig({
+        FIREBASE_PROJECT_ID: 'demo-living-community-assistant',
         HOST: '0.0.0.0',
         PORT: '4001',
         CORS_ORIGINS: 'https://example.com, http://localhost:4200 ',
       }),
     ).toEqual({
+      firebaseProjectId: 'demo-living-community-assistant',
       host: '0.0.0.0',
       port: 4001,
       allowedOrigins: ['https://example.com', 'http://localhost:4200'],
@@ -52,3 +57,6 @@ describe('server configuration', () => {
   it('rejects an empty host', () =>
     expect(() => readConfig({ HOST: ' ' })).toThrow(/HOST/));
 });
+
+it('requires an explicit Firebase project', () =>
+  expect(() => readConfig({})).toThrow(/FIREBASE_PROJECT_ID/));

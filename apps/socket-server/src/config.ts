@@ -1,4 +1,5 @@
 export interface ServerConfig {
+  firebaseProjectId: string;
   host: string;
   port: number;
   allowedOrigins: string[];
@@ -38,5 +39,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       );
     }
   }
-  return { host, port, allowedOrigins };
+  const firebaseProjectId = env.FIREBASE_PROJECT_ID?.trim();
+  if (!firebaseProjectId) throw new Error('FIREBASE_PROJECT_ID is required.');
+  return { host, port, allowedOrigins, firebaseProjectId };
 }

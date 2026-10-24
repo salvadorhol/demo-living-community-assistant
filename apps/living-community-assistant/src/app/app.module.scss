@@ -34,3 +34,20 @@
   letter-spacing: 0.12em;
   font-size: 0.8rem;
 }
+
+.dot {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  margin-right: 0.5em;
+}
+.connected {
+  background: #237846;
+}
+.connecting {
+  background: #9b7100;
+}
+.disconnected {
+  background: #bd3030;
+}

@@ -3,6 +3,7 @@ import type { FirebaseClientEnvironment } from './environment.types';
 // Copy to environment.local.ts for emulator development. For production,
 // copy to environment.prod.ts and replace every value with your Web app config.
 export default {
+  socketUrl: 'http://127.0.0.1:3000',
   firebase: {
     apiKey: 'demo-api-key',
     authDomain: 'demo-living-community-assistant.firebaseapp.com',

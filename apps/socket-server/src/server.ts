@@ -1,3 +1,4 @@
+import type { DecodedIdToken } from 'firebase-admin/auth';
 import { createServer } from 'node:http';
 import express from 'express';
 import cors from 'cors';
@@ -13,27 +14,54 @@ function health(): HealthResponse {
   return { status: 'ok', time: Date.now() };
 }
 
-export function createSocketServer(config: ServerConfig) {
+export function createSocketServer(
+  config: ServerConfig,
+  verifyToken: (token: string) => Promise<DecodedIdToken>,
+) {
   const app = express();
   app.disable('x-powered-by');
   app.use(cors({ origin: config.allowedOrigins }));
   app.get('/health', (_request, response) => response.json(health()));
 
   const httpServer = createServer(app);
-  const io = new Server<ClientToServerEvents, ServerToClientEvents>(
-    httpServer,
-    {
-      cors: { origin: config.allowedOrigins },
-      // CORS alone does not restrict WebSocket upgrades.
-      allowRequest: (request, callback) => {
-        const origin = request.headers.origin;
-        callback(
-          null,
-          origin === undefined || config.allowedOrigins.includes(origin),
-        );
-      },
+  const io = new Server<
+    ClientToServerEvents,
+    ServerToClientEvents,
+    Record<string, never>,
+    { uid: string }
+  >(httpServer, {
+    cors: { origin: config.allowedOrigins },
+    // CORS alone does not restrict WebSocket upgrades.
+    allowRequest: (request, callback) => {
+      const origin = request.headers.origin;
+      callback(
+        null,
+        origin === undefined || config.allowedOrigins.includes(origin),
+      );
     },
-  );
+  });
+  io.use(async (socket, next) => {
+    const token: unknown = socket.handshake.auth.token;
+    if (typeof token !== 'string' || !token.trim()) {
+      next(
+        Object.assign(new Error('Authentication required.'), {
+          data: { code: 'UNAUTHENTICATED' },
+        }),
+      );
+      return;
+    }
+    try {
+      const decoded = await verifyToken(token);
+      socket.data.uid = decoded.uid;
+      next();
+    } catch {
+      next(
+        Object.assign(new Error('Authentication failed.'), {
+          data: { code: 'UNAUTHENTICATED' },
+        }),
+      );
+    }
+  });
   io.on('connection', (socket) => {
     socket.emit('health:status', health());
     socket.on('health:check', (acknowledge) => {

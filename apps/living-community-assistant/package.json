@@ -5,7 +5,8 @@
   "type": "module",
   "dependencies": {
     "@living-community-assistant/types": "*",
-    "firebase": "^13.1.0"
+    "firebase": "^13.1.0",
+    "socket.io-client": "^4.8.1"
   },
   "nx": {
     "name": "living-community-assistant",
@@ -20,6 +21,7 @@
         "options": {
           "commands": [
             "npx nx run functions:serve",
+            "npx nx run socket-server:local-emulator",
             "npx vite --config apps/living-community-assistant/vite.config.mts --mode local-emulator"
           ],
           "parallel": true

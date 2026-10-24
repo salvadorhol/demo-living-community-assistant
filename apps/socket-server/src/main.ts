@@ -1,8 +1,13 @@
+import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { readConfig } from './config.ts';
 import { createSocketServer } from './server.ts';
 
 const config = readConfig();
-const server = createSocketServer(config);
+const firebase = initializeApp({ projectId: config.firebaseProjectId });
+const server = createSocketServer(config, (token) =>
+  getAuth(firebase).verifyIdToken(token),
+);
 server.httpServer.on('error', (error) => {
   console.error('Socket server failed:', error.message);
   process.exitCode = 1;

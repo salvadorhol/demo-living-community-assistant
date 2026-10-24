@@ -1,3 +1,4 @@
+import type { DecodedIdToken } from 'firebase-admin/auth';
 import type { AddressInfo } from 'node:net';
 import { io, type Socket } from 'socket.io-client';
 import type {
@@ -14,11 +15,18 @@ const clients: Socket<ServerToClientEvents, ClientToServerEvents>[] = [];
 
 beforeEach(async () => {
   startedAt = Date.now();
-  server = createSocketServer({
-    host: '127.0.0.1',
-    port: 3000,
-    allowedOrigins: ['http://localhost:4200'],
-  });
+  server = createSocketServer(
+    {
+      firebaseProjectId: 'demo-living-community-assistant',
+      host: '127.0.0.1',
+      port: 3000,
+      allowedOrigins: ['http://localhost:4200'],
+    },
+    async (token) => {
+      if (token !== 'valid-token') throw new Error('Invalid token');
+      return { uid: 'anonymous-user' } as DecodedIdToken;
+    },
+  );
   await new Promise<void>((resolve, reject) => {
     server.httpServer.once('error', reject);
     server.httpServer.listen(0, '127.0.0.1', resolve);
@@ -34,6 +42,7 @@ afterEach(async () => {
 function client(transport: 'websocket' | 'polling', origin?: string) {
   const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(url, {
     transports: [transport],
+    auth: { token: 'valid-token' },
     autoConnect: false,
     forceNew: true,
     reconnection: false,
@@ -132,6 +141,7 @@ it('disconnects clients and permits repeated shutdown', async () => {
 
 it('upgrades a default polling connection to WebSocket', async () => {
   const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(url, {
+    auth: { token: 'valid-token' },
     autoConnect: false,
     forceNew: true,
     reconnection: false,
@@ -146,4 +156,20 @@ it('upgrades a default polling connection to WebSocket', async () => {
   await upgraded;
   expect(socket.io.engine.transport.name).toBe('websocket');
   expectHealth(await socket.timeout(2000).emitWithAck('health:check'));
+});
+
+it.each([undefined, '', 123, 'expired-token', 'wrong-project-token'])(
+  'rejects invalid authentication %j',
+  async (token) => {
+    const socket = client('websocket');
+    socket.auth = { token };
+    await expect(connect(socket)).rejects.toThrow(/Authentication/);
+    expect(server.io.sockets.sockets.size).toBe(0);
+  },
+);
+it('stores the verified identity on the socket', async () => {
+  await connect(client('websocket'));
+  expect([...server.io.sockets.sockets.values()][0].data.uid).toBe(
+    'anonymous-user',
+  );
 });

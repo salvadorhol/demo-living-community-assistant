@@ -26,7 +26,9 @@
       "executor": "nx:run-commands",
       "cache": false,
       "continuous": true,
-      "options": { "command": "nx serve socket-server" }
+      "options": {
+        "command": "nx serve socket-server"
+      }
     },
     "start": {
       "executor": "nx:run-commands",
@@ -35,6 +37,18 @@
       "dependsOn": ["build"],
       "options": {
         "command": "node --env-file-if-exists=apps/socket-server/.env apps/socket-server/dist/main.cjs"
+      }
+    },
+    "local-emulator": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "continuous": true,
+      "options": {
+        "command": "node --env-file-if-exists=apps/socket-server/.env --watch apps/socket-server/src/main.ts",
+        "env": {
+          "FIREBASE_PROJECT_ID": "demo-living-community-assistant",
+          "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099"
+        }
       }
     }
   }

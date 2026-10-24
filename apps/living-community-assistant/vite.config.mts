@@ -20,6 +20,10 @@ export default defineConfig(async ({ command, mode }) => {
       throw new Error(`${selected.path} must define firebase.${key}.`);
     }
   }
+  const socketUrl = new URL(environment.socketUrl);
+  if (!['http:', 'https:'].includes(socketUrl.protocol)) {
+    throw new Error(`${selected.path} must define an HTTP(S) socketUrl.`);
+  }
   return {
     root: import.meta.dirname,
     cacheDir: '../../node_modules/.vite/apps/living-community-assistant',
