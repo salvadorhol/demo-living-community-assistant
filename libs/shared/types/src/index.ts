@@ -3,6 +3,10 @@ export interface HealthResponse {
   time: number;
 }
 
+export interface VoiceRoomSession {
+  roomId: string;
+}
+
 export interface ClientToServerEvents {
   'audio:input:start': (
     stream: AudioStream,
@@ -20,6 +24,7 @@ export interface ClientToServerEvents {
 }
 
 export interface ServerToClientEvents {
+  'voice:session:ready': (session: VoiceRoomSession) => void;
   'audio:output:start': (stream: AudioStream) => void;
   'audio:output:chunk': (chunk: AudioChunk) => void;
   'audio:output:end': (stream: AudioStreamEnd) => void;

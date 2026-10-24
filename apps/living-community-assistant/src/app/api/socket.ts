@@ -6,6 +6,7 @@ import type {
   AudioOutputEvent,
   ClientToServerEvents,
   ServerToClientEvents,
+  VoiceRoomSession,
 } from '@living-community-assistant/types';
 import environment from '#firebase-environment';
 import { ensureAnonymousSession } from './session';
@@ -14,6 +15,7 @@ export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionStatus {
   state: ConnectionState;
   error?: string;
+  session?: VoiceRoomSession;
 }
 
 export interface SocketConnection {
@@ -33,6 +35,7 @@ export function startSocket(
   let disposed = false;
   let refreshed = false;
   let forceRefresh = false;
+  let session: VoiceRoomSession | undefined;
   const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(
     environment.socketUrl,
     {
@@ -69,9 +72,18 @@ export function startSocket(
   );
   socket.on('connect', () => {
     refreshed = false;
-    onStatus({ state: 'connected' });
+    session = undefined;
+    onStatus({ state: 'connecting' });
   });
-  socket.on('disconnect', () => onStatus({ state: 'disconnected' }));
+  socket.on('voice:session:ready', (value) => {
+    if (disposed || !socket.connected) return;
+    session = value;
+    onStatus({ state: 'connected', session });
+  });
+  socket.on('disconnect', () => {
+    session = undefined;
+    onStatus({ state: 'disconnected' });
+  });
   socket.io.on('reconnect_attempt', () => onStatus({ state: 'connecting' }));
   socket.on('connect_error', (error: Error & { data?: { code?: string } }) => {
     if (error.data?.code === 'UNAUTHENTICATED' && !refreshed) {
@@ -104,13 +116,14 @@ export function startSocket(
   );
   const close = () => {
     disposed = true;
+    session = undefined;
     audioListeners.clear();
     socket.removeAllListeners();
     socket.io.removeAllListeners();
     socket.disconnect();
   };
   function connected() {
-    if (disposed || !socket.connected)
+    if (disposed || !socket.connected || !session)
       throw new Error('Socket disconnected. Start again after reconnecting.');
   }
   function accepted(result: AudioAck) {

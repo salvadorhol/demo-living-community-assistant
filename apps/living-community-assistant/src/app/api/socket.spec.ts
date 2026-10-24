@@ -1,12 +1,10 @@
+import type { VoiceRoomSession } from '@living-community-assistant/types';
 import { startSocket } from './socket';
 const mocks = vi.hoisted(() => ({
   options: {} as {
     auth: (callback: (value: unknown) => void) => Promise<void>;
   },
-  handlers: {} as Record<
-    string,
-    (error?: Error & { data?: { code?: string } }) => void
-  >,
+  handlers: {} as Record<string, (value?: unknown) => void>,
   manager: {} as Record<
     string,
     (error?: Error & { data?: { code?: string } }) => void
@@ -52,9 +50,18 @@ it('supplies a token and reflects connection and reconnect events', async () => 
   await mocks.options.auth(callback);
   expect(callback).toHaveBeenCalledWith({ token: 'id-token' });
   mocks.handlers.connect();
-  expect(status).toHaveBeenLastCalledWith({ state: 'connected' });
+  expect(status).toHaveBeenLastCalledWith({ state: 'connecting' });
+  const session: VoiceRoomSession = { roomId: 'room-one' };
+  mocks.handlers['voice:session:ready'](session);
+  expect(status).toHaveBeenLastCalledWith({ state: 'connected', session });
   mocks.handlers.disconnect();
   expect(status).toHaveBeenLastCalledWith({ state: 'disconnected' });
+  mocks.handlers.connect();
+  mocks.handlers['voice:session:ready']({ roomId: 'room-two' });
+  expect(status).toHaveBeenLastCalledWith({
+    state: 'connected',
+    session: { roomId: 'room-two' },
+  });
   mocks.manager.reconnect_attempt();
   expect(status).toHaveBeenLastCalledWith({ state: 'connecting' });
   stop();
@@ -94,6 +101,8 @@ it('reports sign-in failure and prevents pending work from connecting after clea
 
 it('bounds audio acknowledgements and prevents offline buffering', async () => {
   const connection = startSocket(vi.fn());
+  await expect(connection.stopAudio('s')).rejects.toThrow('disconnected');
+  mocks.handlers['voice:session:ready']({ roomId: 'room' });
   await connection.startAudio({
     streamId: 's',
     format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
@@ -120,4 +129,13 @@ it('bounds audio acknowledgements and prevents offline buffering', async () => {
     }),
   ).rejects.toThrow('disconnected');
   connection();
+});
+
+it('ignores session readiness after disposal', () => {
+  const status = vi.fn();
+  const close = startSocket(status);
+  close();
+  status.mockClear();
+  mocks.handlers['voice:session:ready']({ roomId: 'late' });
+  expect(status).not.toHaveBeenCalled();
 });

@@ -5,6 +5,7 @@ import type {
   ClientToServerEvents,
   ServerToClientEvents,
   HealthResponse,
+  VoiceRoomSession,
 } from '@living-community-assistant/types';
 import { createSocketServer } from './server.ts';
 
@@ -23,8 +24,11 @@ beforeEach(async () => {
       allowedOrigins: ['http://localhost:4200'],
     },
     async (token) => {
-      if (token !== 'valid-token') throw new Error('Invalid token');
-      return { uid: 'anonymous-user' } as DecodedIdToken;
+      if (!['valid-token', 'other-token'].includes(token))
+        throw new Error('Invalid token');
+      return {
+        uid: token === 'other-token' ? 'other-user' : 'anonymous-user',
+      } as DecodedIdToken;
     },
   );
   await new Promise<void>((resolve, reject) => {
@@ -165,6 +169,7 @@ it.each([undefined, '', 123, 'expired-token', 'wrong-project-token'])(
     socket.auth = { token };
     await expect(connect(socket)).rejects.toThrow(/Authentication/);
     expect(server.io.sockets.sockets.size).toBe(0);
+    expect(server.io.sockets.adapter.rooms.size).toBe(0);
   },
 );
 it('stores the verified identity on the socket', async () => {
@@ -172,4 +177,74 @@ it('stores the verified identity on the socket', async () => {
   expect([...server.io.sockets.sockets.values()][0].data.uid).toBe(
     'anonymous-user',
   );
+});
+
+function onServerDisconnect(
+  socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+) {
+  const peer = socket.id && server.io.sockets.sockets.get(socket.id);
+  if (!peer) throw new Error('Expected a connected server socket');
+  return new Promise<void>((resolve) =>
+    peer.once('disconnect', () => resolve()),
+  );
+}
+
+async function joinVoiceRoom(
+  socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+) {
+  const ready = new Promise<VoiceRoomSession>((resolve) =>
+    socket.once('voice:session:ready', resolve),
+  );
+  await connect(socket);
+  return ready;
+}
+
+it('shares rooms only within a verified UID and keeps them through microphone cycles', async () => {
+  const first = client('websocket');
+  const second = client('polling');
+  const other = client('websocket');
+  other.auth = { token: 'other-token' };
+  const room = await joinVoiceRoom(first);
+  expect(room.roomId).toEqual(expect.any(String));
+  expect(await joinVoiceRoom(second)).toEqual(room);
+  expect(await joinVoiceRoom(other)).not.toEqual(room);
+  expect(server.io.sockets.adapter.rooms.get(room.roomId)?.size).toBe(2);
+  const format = {
+    encoding: 'pcm16le',
+    sampleRate: 24000,
+    channels: 1,
+  } as const;
+  for (const cancel of [false, true]) {
+    expect(
+      await first.timeout(1000).emitWithAck('audio:input:start', {
+        streamId: 'input',
+        format,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      await first.timeout(1000).emitWithAck('audio:input:stop', {
+        streamId: 'input',
+        cancel,
+      }),
+    ).toEqual({ ok: true });
+    expect(server.io.sockets.adapter.rooms.get(room.roomId)?.size).toBe(2);
+  }
+  const left = onServerDisconnect(first);
+  first.disconnect();
+  await left;
+  const third = client('websocket');
+  expect(await joinVoiceRoom(third)).toEqual(room);
+  expect(server.io.sockets.adapter.rooms.get(room.roomId)?.size).toBe(2);
+});
+
+it('removes the last member and creates a fresh session on reconnect', async () => {
+  const socket = client('websocket');
+  const room = await joinVoiceRoom(socket);
+  const left = onServerDisconnect(socket);
+  socket.disconnect();
+  await left;
+  expect(server.io.sockets.adapter.rooms.has(room.roomId)).toBe(false);
+  expect(await joinVoiceRoom(socket)).not.toEqual(room);
+  await server.close();
+  expect(server.io.sockets.adapter.rooms.size).toBe(0);
 });

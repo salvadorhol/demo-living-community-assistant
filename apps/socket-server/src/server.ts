@@ -1,5 +1,6 @@
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { Server } from 'socket.io';
@@ -64,12 +65,33 @@ export function createSocketServer(
       );
     }
   });
-  io.on('connection', (socket) => {
+  const rooms = new Map<string, { roomId: string; members: Set<string> }>();
+  io.on('connection', async (socket) => {
+    const uid = socket.data.uid;
+    let room = rooms.get(uid);
+    if (!room) {
+      room = { roomId: randomUUID(), members: new Set() };
+      rooms.set(uid, room);
+    }
+    const session = room;
+    session.members.add(socket.id);
+    socket.once('disconnect', () => {
+      session.members.delete(socket.id);
+      if (!session.members.size && rooms.get(uid) === session)
+        rooms.delete(uid);
+    });
     attachAudio(socket, audioFactory);
     socket.emit('health:status', health());
     socket.on('health:check', (acknowledge) => {
       if (typeof acknowledge === 'function') acknowledge(health());
     });
+    try {
+      await socket.join(session.roomId);
+      if (socket.connected)
+        socket.emit('voice:session:ready', { roomId: session.roomId });
+    } catch {
+      socket.disconnect(true);
+    }
   });
 
   let closing: Promise<void> | undefined;
