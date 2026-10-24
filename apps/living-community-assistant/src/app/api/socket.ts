@@ -1,5 +1,9 @@
 import { io, type Socket } from 'socket.io-client';
 import type {
+  AudioAck,
+  AudioChunk,
+  AudioStream,
+  AudioOutputEvent,
   ClientToServerEvents,
   ServerToClientEvents,
 } from '@living-community-assistant/types';
@@ -12,9 +16,20 @@ export interface ConnectionStatus {
   error?: string;
 }
 
+export interface SocketConnection {
+  (): void;
+  startAudio(stream: AudioStream): Promise<void>;
+  sendAudio(chunk: AudioChunk): Promise<void>;
+  stopAudio(streamId: string, cancel?: boolean): Promise<void>;
+  onAudio(listener: (event: AudioOutputEvent) => void): () => void;
+}
+
 export function startSocket(
   onStatus: (status: ConnectionStatus) => void,
-): () => void {
+): SocketConnection {
+  const audioListeners = new Set<(event: AudioOutputEvent) => void>();
+  const emitAudio = (event: AudioOutputEvent) =>
+    audioListeners.forEach((listener) => listener(event));
   let disposed = false;
   let refreshed = false;
   let forceRefresh = false;
@@ -39,6 +54,18 @@ export function startSocket(
         }
       },
     },
+  );
+  socket.on('audio:output:start', (stream) =>
+    emitAudio({ type: 'start', stream }),
+  );
+  socket.on('audio:output:chunk', (chunk) =>
+    emitAudio({ type: 'chunk', chunk }),
+  );
+  socket.on('audio:output:end', ({ streamId }) =>
+    emitAudio({ type: 'end', streamId }),
+  );
+  socket.on('audio:output:clear', ({ streamId }) =>
+    emitAudio({ type: 'clear', streamId }),
   );
   socket.on('connect', () => {
     refreshed = false;
@@ -75,10 +102,47 @@ export function startSocket(
         });
     },
   );
-  return () => {
+  const close = () => {
     disposed = true;
+    audioListeners.clear();
     socket.removeAllListeners();
     socket.io.removeAllListeners();
     socket.disconnect();
   };
+  function connected() {
+    if (disposed || !socket.connected)
+      throw new Error('Socket disconnected. Start again after reconnecting.');
+  }
+  function accepted(result: AudioAck) {
+    if (!result?.ok)
+      throw new Error(result?.message ?? 'Audio request failed.');
+  }
+  return Object.assign(close, {
+    async startAudio(stream: AudioStream) {
+      connected();
+      accepted(
+        await socket.timeout(2000).emitWithAck('audio:input:start', stream),
+      );
+    },
+    async sendAudio(chunk: AudioChunk) {
+      connected();
+      accepted(
+        await socket.timeout(2000).emitWithAck('audio:input:chunk', chunk),
+      );
+    },
+    async stopAudio(streamId: string, cancel = false) {
+      connected();
+      accepted(
+        await socket
+          .timeout(2000)
+          .emitWithAck('audio:input:stop', { streamId, cancel }),
+      );
+    },
+    onAudio(listener: (event: AudioOutputEvent) => void) {
+      audioListeners.add(listener);
+      return () => {
+        audioListeners.delete(listener);
+      };
+    },
+  });
 }

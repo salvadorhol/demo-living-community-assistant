@@ -3,7 +3,12 @@ import { checkHealth } from './api/health';
 import App from './app';
 import { startSocket, type ConnectionStatus } from './api/socket';
 
-vi.mock('./api/socket', () => ({ startSocket: vi.fn(() => () => undefined) }));
+vi.mock('./audio/capture', () => ({ microphoneSupported: () => false }));
+vi.mock('./api/socket', () => ({
+  startSocket: vi.fn(() =>
+    Object.assign(() => undefined, { onAudio: () => () => undefined }),
+  ),
+}));
 
 vi.mock('./api/health', () => ({ checkHealth: vi.fn() }));
 
@@ -22,16 +27,24 @@ describe('backend connectivity', () => {
     expect(
       screen.getByRole('status', { name: 'Backend health status' }).textContent,
     ).toContain('Checking');
-    expect((screen.getByRole('button') as HTMLButtonElement).disabled).toBe(
-      true,
-    );
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Checking…',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     await act(async () => finish({ status: 'ok', time: 1234 }));
     expect(
       screen.getByRole('status', { name: 'Backend health status' }).textContent,
     ).toContain('Backend ok');
-    expect((screen.getByRole('button') as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Check backend',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it('shows a recoverable failure', async () => {
@@ -43,9 +56,13 @@ describe('backend connectivity', () => {
     expect(
       screen.getByRole('status', { name: 'Backend health status' }).textContent,
     ).toContain('Backend unavailable');
-    expect((screen.getByRole('button') as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (
+        screen.getByRole('button', {
+          name: 'Check backend',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 });
 
@@ -54,7 +71,12 @@ it('shows socket state changes and offers a fresh connection after failure', () 
   const stop = vi.fn();
   vi.mocked(startSocket).mockImplementation((callback) => {
     update = callback;
-    return stop;
+    return Object.assign(stop, {
+      onAudio: () => () => undefined,
+      startAudio: async () => undefined,
+      sendAudio: async () => undefined,
+      stopAudio: async () => undefined,
+    }) as ReturnType<typeof startSocket>;
   });
   const view = render(<App />);
   const indicator = screen.getByRole('status', {

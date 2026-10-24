@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { checkHealth } from './api/health';
 import { startSocket, type ConnectionStatus } from './api/socket';
+import { VoiceSession, type VoiceStatus } from './audio/voice';
+import { microphoneSupported } from './audio/capture';
 import styles from './app.module.scss';
 
 export function App() {
@@ -8,7 +10,28 @@ export function App() {
     state: 'connecting',
   });
   const [attempt, setAttempt] = useState(0);
-  useEffect(() => startSocket(setSocketStatus), [attempt]);
+  const voice = useRef<VoiceSession | undefined>(undefined);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
+    state: 'idle',
+  });
+  const [playbackIssue, setPlaybackIssue] = useState<string>();
+  useEffect(() => {
+    const connection = startSocket((status) => {
+      setSocketStatus(status);
+      if (status.state !== 'connected') voice.current?.disconnect();
+    });
+    const session = new VoiceSession(
+      connection,
+      setVoiceStatus,
+      setPlaybackIssue,
+    );
+    voice.current = session;
+    return () => {
+      session.dispose();
+      voice.current = undefined;
+      connection();
+    };
+  }, [attempt]);
   const [status, setStatus] = useState('Ready to check backend connectivity.');
   const [loading, setLoading] = useState(false);
 
@@ -47,6 +70,50 @@ export function App() {
         {socketStatus.state === 'disconnected' && (
           <button onClick={() => setAttempt((value) => value + 1)}>
             Retry connection
+          </button>
+        )}
+      </section>
+      <section aria-labelledby="microphone-title">
+        <h2 id="microphone-title">Microphone</h2>
+        <p>
+          Hear your microphone streamed back from the server. Use headphones to
+          avoid feedback.
+        </p>
+        {!microphoneSupported() && (
+          <p>
+            Microphone streaming requires Web Audio and microphone access on
+            HTTPS or localhost.
+          </p>
+        )}
+        <button
+          disabled={
+            !microphoneSupported() ||
+            socketStatus.state !== 'connected' ||
+            !['idle', 'error'].includes(voiceStatus.state)
+          }
+          onClick={() => void voice.current?.start()}
+        >
+          Start microphone
+        </button>
+        <button
+          disabled={
+            !['requesting permission', 'streaming'].includes(voiceStatus.state)
+          }
+          onClick={() => void voice.current?.stop()}
+        >
+          Stop microphone
+        </button>
+        <p role="status" aria-label="Microphone status">
+          Microphone {voiceStatus.state}
+          {voiceStatus.state === 'streaming' &&
+            !!voiceStatus.chunksSent &&
+            ' · Audio received by server'}
+        </p>
+        {voiceStatus.error && <p role="alert">{voiceStatus.error}</p>}
+        {playbackIssue && <p role="alert">{playbackIssue}</p>}
+        {playbackIssue && (
+          <button onClick={() => void voice.current?.enableAudio()}>
+            Enable audio
           </button>
         )}
       </section>

@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   token: vi.fn(),
   session: vi.fn(),
   socket: {
+    connected: true,
+    timeout: vi.fn(),
+    emitWithAck: vi.fn(),
     connect: vi.fn(),
     disconnect: vi.fn(),
     removeAllListeners: vi.fn(),
@@ -36,6 +39,9 @@ vi.mock('socket.io-client', () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.socket.connected = true;
+  mocks.socket.timeout.mockReturnValue(mocks.socket);
+  mocks.socket.emitWithAck.mockResolvedValue({ ok: true });
   mocks.session.mockResolvedValue({ getIdToken: mocks.token });
   mocks.token.mockResolvedValue('id-token');
 });
@@ -84,4 +90,34 @@ it('reports sign-in failure and prevents pending work from connecting after clea
   stop();
   await mocks.options.auth(callback);
   expect(callback).not.toHaveBeenCalled();
+});
+
+it('bounds audio acknowledgements and prevents offline buffering', async () => {
+  const connection = startSocket(vi.fn());
+  await connection.startAudio({
+    streamId: 's',
+    format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
+  });
+  expect(mocks.socket.timeout).toHaveBeenCalledWith(2000);
+  await connection.sendAudio({
+    streamId: 's',
+    sequence: 0,
+    data: new Uint8Array(2),
+  });
+  mocks.socket.emitWithAck.mockRejectedValueOnce(new Error('timeout'));
+  await expect(connection.stopAudio('s')).rejects.toThrow('timeout');
+  mocks.socket.emitWithAck.mockResolvedValueOnce({
+    ok: false,
+    message: 'Invalid stream',
+  });
+  await expect(connection.stopAudio('s')).rejects.toThrow('Invalid stream');
+  mocks.socket.connected = false;
+  await expect(
+    connection.sendAudio({
+      streamId: 's',
+      sequence: 1,
+      data: new Uint8Array(2),
+    }),
+  ).rejects.toThrow('disconnected');
+  connection();
 });

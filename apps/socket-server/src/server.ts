@@ -8,6 +8,7 @@ import type {
   ServerToClientEvents,
   HealthResponse,
 } from '@living-community-assistant/types';
+import { attachAudio, echoAudio, type AudioSessionFactory } from './audio.ts';
 import type { ServerConfig } from './config.ts';
 
 function health(): HealthResponse {
@@ -17,6 +18,7 @@ function health(): HealthResponse {
 export function createSocketServer(
   config: ServerConfig,
   verifyToken: (token: string) => Promise<DecodedIdToken>,
+  audioFactory: AudioSessionFactory = echoAudio,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -63,6 +65,7 @@ export function createSocketServer(
     }
   });
   io.on('connection', (socket) => {
+    attachAudio(socket, audioFactory);
     socket.emit('health:status', health());
     socket.on('health:check', (acknowledge) => {
       if (typeof acknowledge === 'function') acknowledge(health());
