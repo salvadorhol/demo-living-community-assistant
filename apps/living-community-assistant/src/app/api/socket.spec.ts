@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   session: vi.fn(),
   socket: {
     connected: true,
+    emit: vi.fn(),
     timeout: vi.fn(),
     emitWithAck: vi.fn(),
     connect: vi.fn(),
@@ -107,7 +108,7 @@ it('bounds audio acknowledgements and prevents offline buffering', async () => {
     streamId: 's',
     format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
   });
-  expect(mocks.socket.timeout).toHaveBeenCalledWith(2000);
+  expect(mocks.socket.timeout).toHaveBeenCalledWith(12000);
   await connection.sendAudio({
     streamId: 's',
     sequence: 0,
@@ -138,4 +139,31 @@ it('ignores session readiness after disposal', () => {
   status.mockClear();
   mocks.handlers['voice:session:ready']({ roomId: 'late' });
   expect(status).not.toHaveBeenCalled();
+});
+
+it('delivers transcripts only for a ready connection and removes subscriptions', () => {
+  const connection = startSocket(vi.fn());
+  const listener = vi.fn();
+  const update = {
+    id: 'utterance',
+    role: 'user',
+    text: 'Hello',
+    isFinal: false,
+  };
+  const unsubscribe = connection.onTranscript(listener);
+  mocks.handlers['transcript:update'](update);
+  expect(listener).not.toHaveBeenCalled();
+  mocks.handlers['voice:session:ready']({ roomId: 'room' });
+  mocks.handlers['transcript:update'](update);
+  expect(listener).toHaveBeenCalledWith(update);
+  unsubscribe();
+  mocks.handlers['transcript:update'](update);
+  expect(listener).toHaveBeenCalledTimes(1);
+  connection.onTranscript(listener);
+  mocks.handlers.disconnect();
+  mocks.handlers['transcript:update'](update);
+  expect(listener).toHaveBeenCalledTimes(1);
+  connection();
+  mocks.handlers['transcript:update'](update);
+  expect(listener).toHaveBeenCalledTimes(1);
 });

@@ -4,9 +4,16 @@ import { MicrophoneCapture } from './capture';
 import { AudioPlayback } from './playback';
 
 export interface VoiceStatus {
-  state: 'idle' | 'requesting permission' | 'streaming' | 'stopping' | 'error';
+  state:
+    | 'idle'
+    | 'requesting permission'
+    | 'connecting voice'
+    | 'streaming'
+    | 'stopping'
+    | 'error';
   error?: string;
   chunksSent?: number;
+  microphoneName?: string;
 }
 interface ActiveInput {
   id: string;
@@ -27,10 +34,23 @@ export class VoiceSession {
     private status: (status: VoiceStatus) => void,
     private playbackIssue: (message?: string) => void,
   ) {
-    this.playback = new AudioPlayback(playbackIssue);
-    this.unsubscribe = connection.onAudio((event) =>
-      this.playback.handle(event),
+    this.playback = new AudioPlayback(
+      (message) => {
+        playbackIssue(message);
+        if (message && this.active) this.fail(this.active, new Error(message));
+      },
+      (progress) => connection.reportPlayback(progress),
     );
+    this.unsubscribe = connection.onAudio((event) => {
+      if (event.type === 'error') {
+        if (this.active) this.fail(this.active, new Error(event.error.message));
+        else {
+          this.playback.clear();
+          this.status({ state: 'error', error: event.error.message });
+        }
+      } else if (this.active || event.type === 'clear' || event.type === 'end')
+        this.playback.handle(event);
+    });
   }
   async enableAudio() {
     if (this.disposed) return;
@@ -64,7 +84,14 @@ export class VoiceSession {
     this.active = input;
     // Both AudioContexts are resumed from the user's Start gesture.
     void this.enableAudio();
-    const capture = input.capture.start();
+    const capture = input.capture.start().then((started) => {
+      if (started && this.active === input && !input.ready)
+        this.status({
+          state: 'connecting voice',
+          microphoneName: input.capture.microphoneName,
+        });
+      return started;
+    });
     const server = this.connection
       .startAudio({ streamId: input.id, format: AUDIO_FORMAT })
       .then(() => {
@@ -78,13 +105,17 @@ export class VoiceSession {
     try {
       const [started] = await Promise.all([capture, server]);
       if (this.active !== input || !started) return;
-      this.status({ state: 'streaming', chunksSent: input.sequence });
+      this.status({
+        state: 'streaming',
+        chunksSent: input.sequence,
+        microphoneName: input.capture.microphoneName,
+      });
     } catch (error) {
       this.fail(input, error);
     }
   }
   private enqueue(input: ActiveInput, data: Uint8Array) {
-    if (this.active !== input) return;
+    if (this.active !== input || !input.ready) return;
     input.bytes += data.byteLength;
     if (input.bytes > 12000) {
       this.fail(
@@ -126,6 +157,7 @@ export class VoiceSession {
       this.status({
         state: this.stopping ? 'stopping' : 'streaming',
         chunksSent: input.sequence,
+        microphoneName: input.capture.microphoneName,
       });
     }
   }
@@ -133,26 +165,23 @@ export class VoiceSession {
   async stop() {
     const input = this.active;
     if (!input || this.stopping) return;
-    if (!input.ready) {
-      this.abort();
-      this.status({ state: 'idle' });
-      return;
-    }
     this.stopping = true;
     this.status({ state: 'stopping', chunksSent: input.sequence });
+    this.playback.clear();
+    this.active = undefined;
+    input.capture.dispose();
+    input.queue = [];
     try {
-      await input.capture.stop();
-      while (this.active === input && (input.sending || input.queue.length)) {
-        this.pump(input);
-        await input.sending;
-      }
-      if (this.active !== input) return;
-      await this.connection.stopAudio(input.id);
-      if (this.active !== input) return;
-      this.active = undefined;
-      this.status({ state: 'idle', chunksSent: input.sequence });
+      await this.connection.stopAudio(input.id, true);
+      if (!this.active && !this.disposed)
+        this.status({ state: 'idle', chunksSent: input.sequence });
     } catch (error) {
-      this.fail(input, error);
+      if (!this.active && !this.disposed)
+        this.status({
+          state: 'error',
+          error:
+            error instanceof Error ? error.message : 'Voice could not stop.',
+        });
     } finally {
       this.stopping = false;
     }
@@ -160,6 +189,7 @@ export class VoiceSession {
   private fail(input: ActiveInput, error: unknown) {
     if (this.active !== input) return;
     this.abort();
+    this.playback.clear();
     this.status({
       state: 'error',
       error:

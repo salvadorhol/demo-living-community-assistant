@@ -112,3 +112,14 @@ it('falls back to a native-rate context when a device rejects 24 kHz', async () 
   expect(await capture.start()).toBe(true);
   capture.dispose();
 });
+
+it('exposes the captured device name with a fallback for unlabeled tracks', async () => {
+  const capture = new MicrophoneCapture(vi.fn(), vi.fn());
+  expect(capture.microphoneName).toBe('Default microphone');
+  Object.assign(track, { label: 'Studio microphone' });
+  await capture.start();
+  expect(capture.microphoneName).toBe('Studio microphone');
+  Object.assign(track, { label: '' });
+  expect(capture.microphoneName).toBe('Default microphone');
+  capture.dispose();
+});

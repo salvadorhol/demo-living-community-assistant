@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   dispose: vi.fn(),
+  playbackClear: vi.fn(),
+  playbackHandle: vi.fn(),
 }));
 vi.mock('./capture', () => ({
   MicrophoneCapture: class {
@@ -21,12 +23,8 @@ vi.mock('./capture', () => ({
 vi.mock('./playback', () => ({
   AudioPlayback: class {
     enable = async () => undefined;
-    handle() {
-      return undefined;
-    }
-    clear() {
-      return undefined;
-    }
+    handle = mocks.playbackHandle;
+    clear = mocks.playbackClear;
     dispose() {
       return undefined;
     }
@@ -37,7 +35,9 @@ function setup() {
     startAudio: vi.fn<SocketConnection['startAudio']>(async () => undefined),
     sendAudio: vi.fn<SocketConnection['sendAudio']>(async () => undefined),
     stopAudio: vi.fn(async () => undefined),
-    onAudio: vi.fn(() => vi.fn()),
+    reportPlayback: vi.fn(),
+    onTranscript: vi.fn(() => vi.fn()),
+    onAudio: vi.fn<SocketConnection['onAudio']>(() => vi.fn()),
   });
   const status = vi.fn();
   const voice = new VoiceSession(
@@ -52,7 +52,7 @@ beforeEach(() => {
   mocks.start.mockResolvedValue(true);
   mocks.stop.mockResolvedValue(undefined);
 });
-it('sends chunks serially and drains a final partial chunk before stop', async () => {
+it('sends chunks serially and immediately discards capture on Stop', async () => {
   const { voice, connection, status } = setup();
   await voice.start();
   mocks.chunk(new Uint8Array(1920));
@@ -62,9 +62,9 @@ it('sends chunks serially and drains a final partial chunk before stop', async (
   await voice.stop();
   expect(
     connection.sendAudio.mock.calls.map(([chunk]) => chunk.sequence),
-  ).toEqual([0, 1]);
+  ).toEqual([0]);
   expect(connection.stopAudio).toHaveBeenCalledTimes(1);
-  expect(status).toHaveBeenLastCalledWith({ state: 'idle', chunksSent: 2 });
+  expect(status).toHaveBeenLastCalledWith({ state: 'idle', chunksSent: 0 });
   voice.dispose();
 });
 it('stops when input exceeds the queue budget and never replays discarded chunks', async () => {
@@ -151,5 +151,59 @@ it('cancels a potentially-created server stream after start times out', async ()
     error: 'start timeout',
   });
   expect(connection.stopAudio).toHaveBeenCalledWith(expect.any(String), true);
+  voice.dispose();
+});
+
+it('discards pre-ready microphone audio without overflowing the queue', async () => {
+  const { voice, connection, status } = setup();
+  let ready: () => void = () => undefined;
+  connection.startAudio.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        ready = resolve;
+      }),
+  );
+  const starting = voice.start();
+  await Promise.resolve();
+  for (let i = 0; i < 50; i++) mocks.chunk(new Uint8Array(1920));
+  expect(connection.sendAudio).not.toHaveBeenCalled();
+  expect(status).toHaveBeenLastCalledWith({ state: 'connecting voice' });
+  ready();
+  await starting;
+  mocks.chunk(new Uint8Array(2));
+  await vi.waitFor(() => expect(connection.sendAudio).toHaveBeenCalledOnce());
+  expect(connection.sendAudio.mock.calls[0][0].sequence).toBe(0);
+  voice.dispose();
+});
+
+it('releases capture on asynchronous provider failure and ignores late speech after Stop', async () => {
+  const { voice, connection, status } = setup();
+  await voice.start();
+  const listener = connection.onAudio.mock.calls[0][0];
+  listener({
+    type: 'error',
+    error: { code: 'VOICE_UNAVAILABLE', message: 'Try Start again.' },
+  });
+  expect(mocks.dispose).toHaveBeenCalled();
+  expect(mocks.playbackClear).toHaveBeenCalled();
+  expect(status).toHaveBeenLastCalledWith({
+    state: 'error',
+    error: 'Try Start again.',
+  });
+  await voice.start();
+  await voice.stop();
+  mocks.playbackHandle.mockClear();
+  listener({
+    type: 'start',
+    stream: {
+      streamId: 'late',
+      format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
+    },
+  });
+  expect(mocks.playbackHandle).not.toHaveBeenCalled();
+  expect(connection.stopAudio).toHaveBeenLastCalledWith(
+    expect.any(String),
+    true,
+  );
   voice.dispose();
 });

@@ -19,6 +19,9 @@ export class MicrophoneCapture {
     private chunk: (data: Uint8Array) => void,
     private lost: () => void,
   ) {}
+  get microphoneName() {
+    return this.stream?.getAudioTracks()[0]?.label || 'Default microphone';
+  }
   async start() {
     if (!microphoneSupported())
       throw new Error(

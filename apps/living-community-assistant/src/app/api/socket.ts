@@ -1,12 +1,14 @@
 import { io, type Socket } from 'socket.io-client';
 import type {
   AudioAck,
+  AudioPlaybackProgress,
   AudioChunk,
   AudioStream,
   AudioOutputEvent,
   ClientToServerEvents,
   ServerToClientEvents,
   VoiceRoomSession,
+  TranscriptUpdate,
 } from '@living-community-assistant/types';
 import environment from '#firebase-environment';
 import { ensureAnonymousSession } from './session';
@@ -23,12 +25,15 @@ export interface SocketConnection {
   startAudio(stream: AudioStream): Promise<void>;
   sendAudio(chunk: AudioChunk): Promise<void>;
   stopAudio(streamId: string, cancel?: boolean): Promise<void>;
+  reportPlayback(progress: AudioPlaybackProgress): void;
+  onTranscript(listener: (update: TranscriptUpdate) => void): () => void;
   onAudio(listener: (event: AudioOutputEvent) => void): () => void;
 }
 
 export function startSocket(
   onStatus: (status: ConnectionStatus) => void,
 ): SocketConnection {
+  const transcriptListeners = new Set<(update: TranscriptUpdate) => void>();
   const audioListeners = new Set<(event: AudioOutputEvent) => void>();
   const emitAudio = (event: AudioOutputEvent) =>
     audioListeners.forEach((listener) => listener(event));
@@ -57,6 +62,13 @@ export function startSocket(
         }
       },
     },
+  );
+  socket.on('transcript:update', (update) => {
+    if (disposed || !socket.connected || !session) return;
+    transcriptListeners.forEach((listener) => listener(update));
+  });
+  socket.on('voice:session:error', (error) =>
+    emitAudio({ type: 'error', error }),
   );
   socket.on('audio:output:start', (stream) =>
     emitAudio({ type: 'start', stream }),
@@ -118,6 +130,7 @@ export function startSocket(
     disposed = true;
     session = undefined;
     audioListeners.clear();
+    transcriptListeners.clear();
     socket.removeAllListeners();
     socket.io.removeAllListeners();
     socket.disconnect();
@@ -134,7 +147,7 @@ export function startSocket(
     async startAudio(stream: AudioStream) {
       connected();
       accepted(
-        await socket.timeout(2000).emitWithAck('audio:input:start', stream),
+        await socket.timeout(12000).emitWithAck('audio:input:start', stream),
       );
     },
     async sendAudio(chunk: AudioChunk) {
@@ -150,6 +163,16 @@ export function startSocket(
           .timeout(2000)
           .emitWithAck('audio:input:stop', { streamId, cancel }),
       );
+    },
+    reportPlayback(progress: AudioPlaybackProgress) {
+      if (!disposed && socket.connected && session)
+        socket.emit('audio:playback:progress', progress);
+    },
+    onTranscript(listener: (update: TranscriptUpdate) => void) {
+      if (!disposed) transcriptListeners.add(listener);
+      return () => {
+        transcriptListeners.delete(listener);
+      };
     },
     onAudio(listener: (event: AudioOutputEvent) => void) {
       audioListeners.add(listener);

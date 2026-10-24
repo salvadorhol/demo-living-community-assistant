@@ -1,4 +1,7 @@
-import type { AudioOutputEvent } from '@living-community-assistant/types';
+import type {
+  AudioOutputEvent,
+  AudioPlaybackProgress,
+} from '@living-community-assistant/types';
 import { AUDIO_FORMAT } from './format';
 
 export class AudioPlayback {
@@ -9,7 +12,30 @@ export class AudioPlayback {
   private nextTime = 0;
   private accepting = false;
   private sources = new Set<AudioBufferSourceNode>();
-  constructor(private issue: (message?: string) => void) {}
+  private progressTimer?: ReturnType<typeof setInterval>;
+  private segments: { start: number; duration: number }[] = [];
+  constructor(
+    private issue: (message?: string) => void,
+    private progress: (value: AudioPlaybackProgress) => void = () => undefined,
+  ) {}
+  private report(cleared = false) {
+    if (!this.streamId) return;
+    const time = this.context?.currentTime ?? 0;
+    const played = this.segments.reduce(
+      (total, segment) =>
+        total + Math.max(0, Math.min(segment.duration, time - segment.start)),
+      0,
+    );
+    this.progress({
+      streamId: this.streamId,
+      playedMs: Math.floor(played * 1000),
+      cleared,
+    });
+    if (!this.accepting && time >= this.nextTime) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = undefined;
+    }
+  }
   async enable() {
     if (this.disposed) return;
     if (typeof AudioContext === 'undefined')
@@ -22,7 +48,7 @@ export class AudioPlayback {
     this.issue(undefined);
   }
   handle(event: AudioOutputEvent) {
-    if (this.disposed) return;
+    if (this.disposed || event.type === 'error') return;
     try {
       if (event.type === 'start') {
         this.clear();
@@ -39,6 +65,7 @@ export class AudioPlayback {
         this.streamId = event.stream.streamId;
         this.sequence = 0;
         this.accepting = true;
+        this.progressTimer = setInterval(() => this.report(), 100);
         return;
       }
       const id =
@@ -88,6 +115,7 @@ export class AudioPlayback {
         this.sources.delete(source);
       };
       this.sources.add(source);
+      this.segments.push({ start, duration });
       source.start(start);
       this.nextTime = start + duration;
     } catch (error) {
@@ -98,6 +126,10 @@ export class AudioPlayback {
     }
   }
   clear() {
+    this.report(true);
+    clearInterval(this.progressTimer);
+    this.progressTimer = undefined;
+    this.segments = [];
     this.sources.forEach((source) => {
       source.stop();
       source.disconnect();

@@ -6,7 +6,11 @@ const sources: {
   disconnect: ReturnType<typeof vi.fn>;
   onended?: () => void;
 }[] = [];
+const contexts: Context[] = [];
 class Context {
+  constructor() {
+    contexts.push(this);
+  }
   state = 'suspended';
   currentTime = 1;
   destination = {};
@@ -94,5 +98,27 @@ it('does not accept chunks after completion', async () => {
   playback.handle({ type: 'end', streamId: 'output' });
   playback.handle(chunk(1));
   expect(sources).toHaveLength(1);
+  playback.dispose();
+});
+
+it('reports actual played time and final position when clearing queued audio', async () => {
+  const progress = vi.fn();
+  const playback = new AudioPlayback(vi.fn(), progress);
+  await playback.enable();
+  playback.handle(start);
+  playback.handle(chunk());
+  playback.handle(chunk(1));
+  const context = contexts.at(-1);
+  if (!context) throw new Error('Missing audio context');
+  context.currentTime = 1.02;
+  playback.clear();
+  expect(progress).toHaveBeenLastCalledWith({
+    streamId: 'output',
+    playedMs: 20,
+    cleared: true,
+  });
+  expect(sources.every((source) => source.stop.mock.calls.length === 1)).toBe(
+    true,
+  );
   playback.dispose();
 });
