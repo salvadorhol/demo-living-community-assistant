@@ -75,3 +75,55 @@ it('retains failed audio, retries upload, and reuses an uploaded reference after
   expect(call.state).toBe('saved');
   expect(existsSync(call.recording.directory)).toBe(false);
 });
+
+it('assigns and persists server timestamps for both speakers without changing them on revisions', async () => {
+  const { call, transcript, store } = setup();
+  await call.start('room');
+  const clock = vi.spyOn(Date.prototype, 'toISOString');
+  const first = '2026-10-24T20:00:00.000Z';
+  const second = '2026-10-24T20:00:05.000Z';
+  try {
+    clock.mockReturnValue(first);
+    call.update({
+      id: 'user',
+      role: 'user',
+      text: 'Hel',
+      isFinal: false,
+      createdAt: 'untrusted',
+    });
+    clock.mockReturnValue(second);
+    call.update({
+      id: 'assistant',
+      role: 'assistant',
+      text: 'Hi',
+      isFinal: true,
+    });
+    call.update({ id: 'user', role: 'user', text: 'Hello', isFinal: true });
+    call.update({
+      id: 'assistant',
+      role: 'assistant',
+      text: 'Hi',
+      isFinal: true,
+      interrupted: true,
+    });
+    expect(transcript.mock.calls.map(([entry]) => entry.createdAt)).toEqual([
+      first,
+      second,
+      first,
+      second,
+    ]);
+  } finally {
+    clock.mockRestore();
+    await call.finish('ended');
+  }
+  expect(store.transcript).toHaveBeenCalledWith(
+    'owner',
+    call.id,
+    expect.objectContaining({ id: 'user', text: 'Hello', createdAt: first }),
+  );
+  expect(store.transcript).toHaveBeenCalledWith(
+    'owner',
+    call.id,
+    expect.objectContaining({ id: 'assistant', createdAt: second }),
+  );
+});

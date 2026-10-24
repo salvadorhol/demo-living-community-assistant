@@ -119,7 +119,7 @@ it('replaces partial transcripts, preserves order and finals, and preserves ende
   expect(screen.queryByText('late')).toBeNull();
   expect(
     screen.getAllByRole('article').map((entry) => entry.textContent),
-  ).toEqual(['YouHello', 'AssistantHi']);
+  ).toEqual(['AssistantHi', 'YouHello']);
   act(() => mocks.voiceStatus({ state: 'idle' }));
   expect(screen.getByText('Hello')).toBeTruthy();
   act(() => mocks.status({ state: 'disconnected' }));
@@ -129,4 +129,92 @@ it('replaces partial transcripts, preserves order and finals, and preserves ende
   act(() => stale({ id: 'late', role: 'user', text: 'stale', isFinal: true }));
   expect(screen.queryByText('stale')).toBeNull();
   view.unmount();
+});
+
+it('shows newest utterances first using conversation order, including delayed transcripts', () => {
+  render(<App />);
+  const update = (value: TranscriptUpdate) =>
+    act(() => mocks.transcript(value));
+  update({
+    id: 'latest',
+    role: 'assistant',
+    text: 'Latest reply',
+    order: 3,
+    isFinal: false,
+  });
+  update({
+    id: 'earliest',
+    role: 'user',
+    text: 'First question',
+    order: 1,
+    isFinal: true,
+  });
+  update({
+    id: 'middle',
+    role: 'user',
+    text: 'Next question',
+    order: 2,
+    isFinal: true,
+  });
+  update({
+    id: 'latest',
+    role: 'assistant',
+    text: 'Latest reply complete',
+    order: 3,
+    isFinal: true,
+  });
+  expect(
+    screen.getAllByRole('article').map((entry) => entry.textContent),
+  ).toEqual([
+    'AssistantLatest reply complete',
+    'YouNext question',
+    'YouFirst question',
+  ]);
+  expect(screen.getByText('Newest first')).toBeTruthy();
+});
+
+it('shows the server message time in each bubble and tolerates older messages without timestamps', () => {
+  render(<App />);
+  const createdAt = '2026-10-24T20:04:00.000Z';
+  act(() =>
+    mocks.transcript({
+      id: 'timestamped',
+      role: 'user',
+      text: 'Hello',
+      isFinal: false,
+      createdAt,
+    }),
+  );
+  act(() =>
+    mocks.transcript({
+      id: 'reply',
+      role: 'assistant',
+      text: 'Hi',
+      isFinal: true,
+      createdAt,
+    }),
+  );
+  const entries = screen.getAllByRole('article');
+  for (const entry of entries) {
+    const time = entry.querySelector('time');
+    expect(time?.getAttribute('datetime')).toBe(createdAt);
+    expect(time?.textContent).toBe(
+      new Date(createdAt).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      }),
+    );
+    expect(time?.title).toBe(new Date(createdAt).toLocaleString());
+  }
+  act(() =>
+    mocks.transcript({
+      id: 'old',
+      role: 'user',
+      text: 'Older message',
+      isFinal: true,
+    }),
+  );
+  expect(
+    screen.getByText('Older message').closest('article')?.querySelector('time'),
+  ).toBeNull();
 });

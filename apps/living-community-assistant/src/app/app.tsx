@@ -40,7 +40,6 @@ export function App() {
   const [microphoneName, setMicrophoneName] = useState('Default microphone');
   const [playbackIssue, setPlaybackIssue] = useState<string>();
   const [transcripts, setTranscripts] = useState<TranscriptUpdate[]>([]);
-  const transcriptEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -102,10 +101,6 @@ export function App() {
       connection();
     };
   }, [attempt]);
-
-  useEffect(() => {
-    transcriptEnd.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [transcripts]);
 
   const active = [
     'requesting permission',
@@ -261,7 +256,10 @@ export function App() {
           className={styles['transcript']}
           aria-labelledby="transcript-title"
         >
-          <h2 id="transcript-title">Transcript</h2>
+          <div className={styles['transcriptHeading']}>
+            <h2 id="transcript-title">Transcript</h2>
+            {transcripts.length > 0 && <span>Newest first</span>}
+          </div>
           {transcripts.length === 0 ? (
             <div className={styles['empty']}>
               <div className={styles['wave']} aria-hidden="true">
@@ -275,17 +273,32 @@ export function App() {
           ) : (
             <div
               className={styles['entries']}
-              role="log"
+              role="region"
+              tabIndex={0}
               aria-label="Conversation transcript"
               aria-live="polite"
               aria-relevant="additions text"
             >
-              {transcripts.map((entry) => (
+              {[...transcripts].reverse().map((entry) => (
                 <article
                   key={entry.id}
-                  className={`${styles['entry']} ${!entry.isFinal ? styles['partial'] : ''}`}
+                  className={`${styles['entry']} ${styles[entry.role]} ${!entry.isFinal ? styles['partial'] : ''}`}
                 >
-                  <h3>{entry.role === 'user' ? 'You' : 'Assistant'}</h3>
+                  <div className={styles['messageHeading']}>
+                    <h3>{entry.role === 'user' ? 'You' : 'Assistant'}</h3>
+                    {entry.createdAt &&
+                      Number.isFinite(Date.parse(entry.createdAt)) && (
+                        <time
+                          dateTime={entry.createdAt}
+                          title={new Date(entry.createdAt).toLocaleString()}
+                        >
+                          {new Date(entry.createdAt).toLocaleTimeString([], {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </time>
+                      )}
+                  </div>
                   <p>
                     {entry.text}
                     {entry.interrupted && <span> (interrupted)</span>}
@@ -301,7 +314,6 @@ export function App() {
                   </p>
                 </article>
               ))}
-              <div ref={transcriptEnd} />
             </div>
           )}
         </section>

@@ -41,6 +41,10 @@ export interface ClientToServerEvents {
 
 /** Full text snapshot for one utterance; IDs remain stable across partial updates. */
 export interface TranscriptUpdate {
+  /** Server-assigned ISO 8601 time of the first transcript update; stable across revisions.
+   * Optional for older messages and provider events before the call assigns metadata.
+   */
+  createdAt?: string;
   callId?: string;
   order?: number;
   revision?: number;

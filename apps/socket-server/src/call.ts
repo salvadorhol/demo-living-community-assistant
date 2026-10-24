@@ -139,6 +139,7 @@ export class SavedCall {
     const update = {
       ...value,
       callId: this.id,
+      createdAt: previous?.createdAt ?? new Date().toISOString(),
       order: previous?.order ?? this.order++,
       revision: (previous?.revision ?? 0) + 1,
     };
