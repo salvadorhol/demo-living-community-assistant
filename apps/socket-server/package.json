@@ -1,0 +1,17 @@
+{
+  "name": "@living-community-assistant/socket-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@living-community-assistant/types": "*",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "socket.io-client": "^4.8.1"
+  }
+}

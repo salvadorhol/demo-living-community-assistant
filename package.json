@@ -4,8 +4,9 @@
   "license": "MIT",
   "scripts": {
     "dev": "nx run living-community-assistant:local-emulator",
-    "build": "nx run-many -t build -p living-community-assistant functions shared-types",
-    "test:deployment": "node --test tools/*.test.mjs"
+    "build": "nx run-many -t build -p living-community-assistant functions shared-types socket-server",
+    "test:deployment": "node --test tools/*.test.mjs",
+    "dev:socket": "nx serve socket-server"
   },
   "private": true,
   "dependencies": {

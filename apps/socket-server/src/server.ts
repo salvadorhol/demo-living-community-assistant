@@ -1,0 +1,63 @@
+import { createServer } from 'node:http';
+import express from 'express';
+import cors from 'cors';
+import { Server } from 'socket.io';
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+  HealthResponse,
+} from '@living-community-assistant/types';
+import type { ServerConfig } from './config.ts';
+
+function health(): HealthResponse {
+  return { status: 'ok', time: Date.now() };
+}
+
+export function createSocketServer(config: ServerConfig) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.use(cors({ origin: config.allowedOrigins }));
+  app.get('/health', (_request, response) => response.json(health()));
+
+  const httpServer = createServer(app);
+  const io = new Server<ClientToServerEvents, ServerToClientEvents>(
+    httpServer,
+    {
+      cors: { origin: config.allowedOrigins },
+      // CORS alone does not restrict WebSocket upgrades.
+      allowRequest: (request, callback) => {
+        const origin = request.headers.origin;
+        callback(
+          null,
+          origin === undefined || config.allowedOrigins.includes(origin),
+        );
+      },
+    },
+  );
+  io.on('connection', (socket) => {
+    socket.emit('health:status', health());
+    socket.on('health:check', (acknowledge) => {
+      if (typeof acknowledge === 'function') acknowledge(health());
+    });
+  });
+
+  let closing: Promise<void> | undefined;
+  return {
+    app,
+    io,
+    httpServer,
+    close: () =>
+      (closing ??= new Promise<void>((resolve, reject) => {
+        io.close((error) => {
+          if (
+            error &&
+            (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+          )
+            reject(error);
+          else resolve();
+        });
+        // Bound shutdown even when an HTTP client keeps its connection alive.
+        httpServer.closeAllConnections();
+      })),
+  };
+}
