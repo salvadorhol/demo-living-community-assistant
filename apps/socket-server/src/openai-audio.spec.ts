@@ -1,3 +1,4 @@
+import { createLogger } from './logger.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import type { AudioOutputEvent } from '@living-community-assistant/types';
@@ -18,12 +19,18 @@ class Upstream extends EventEmitter {
   }
 }
 function setup(key: string | undefined = 'test-key') {
+  const logs: string[] = [];
+  const logger = createLogger(
+    { LOG_FORMAT: 'json' },
+    { write: (line) => logs.push(String(line)) },
+  );
   const upstream = new Upstream();
   const connect = vi.fn(() => upstream as unknown as WebSocket);
   const events: AudioOutputEvent[] = [];
   const factory = createOpenAIAudio(key, connect);
   const agent = factory.create({
     uid: 'private-user',
+    logger,
     output: (event) => events.push(event),
   });
   const initialize = async () => {
@@ -33,7 +40,7 @@ function setup(key: string | undefined = 'test-key') {
     await ready;
     agent.beginInput();
   };
-  return { upstream, connect, events, agent, initialize };
+  return { upstream, connect, events, agent, initialize, logs };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -223,13 +230,18 @@ it('ignores late audio after Stop and truncates from the last report if feedback
 it.each(['error', 'close', 'timeout', 'invalid-json'])(
   'surfaces sanitized %s and rejects pending setup',
   async (failure) => {
-    const { agent, upstream, events } = setup();
+    const { agent, upstream, events, logs } = setup();
     const pending = expect(agent.initialize()).rejects.toThrow();
     if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10_001);
     else if (failure === 'invalid-json')
       upstream.emit('message', Buffer.from('broken'));
     else upstream.emit(failure, new Error('secret provider details'));
     await pending;
+    expect(
+      logs
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.event === 'voice.provider_failed'),
+    ).toHaveLength(1);
     expect(events.at(-1)).toMatchObject({
       type: 'error',
       error: { code: 'VOICE_UNAVAILABLE' },

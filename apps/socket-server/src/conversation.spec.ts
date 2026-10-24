@@ -1,3 +1,4 @@
+import { createLogger } from './logger.ts';
 import type { AddressInfo } from 'node:net';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { io, type Socket } from 'socket.io-client';
@@ -26,7 +27,9 @@ const sockets: Socket<ServerToClientEvents, ClientToServerEvents>[] = [];
 let create: ReturnType<typeof vi.fn<VoiceAgentFactory['create']>>;
 let agents: ReturnType<typeof fixture>[];
 let outputs: ((event: AudioOutputEvent) => void)[];
+let logs: string[];
 beforeEach(async () => {
+  logs = [];
   agents = [];
   outputs = [];
   create = vi.fn(({ output }) => {
@@ -44,6 +47,12 @@ beforeEach(async () => {
     },
     async () => ({ uid: 'shared-uid' }) as DecodedIdToken,
     { kind: 'conversation', create },
+    undefined,
+    undefined,
+    createLogger(
+      { LOG_FORMAT: 'json' },
+      { write: (line) => logs.push(String(line)) },
+    ),
   );
   await new Promise<void>((resolve) =>
     server.httpServer.listen(0, '127.0.0.1', resolve),
@@ -191,4 +200,31 @@ it('rejects another socket call ID, preserves a paused call, and ends it exactly
   expect(statuses.at(-1)?.callId).not.toBe(callId);
   await first.timeout(1000).emitWithAck('call:end', { callId });
   expect(agents[1].dispose).not.toHaveBeenCalled();
+});
+
+it('handles detached End failures without an unhandled rejection and records call context', async () => {
+  const socket = await client();
+  const statuses: { callId: string }[] = [];
+  socket.on('call:status', (status) => statuses.push(status));
+  await socket
+    .timeout(1000)
+    .emitWithAck('audio:input:start', stream('failure'));
+  agents[0].dispose.mockImplementationOnce(() => {
+    throw new Error('dispose fixture failed');
+  });
+  await socket
+    .timeout(1000)
+    .emitWithAck('call:end', { callId: statuses[0].callId });
+  await vi.waitFor(() =>
+    expect(logs.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        event: 'call.finalization_failed',
+        callId: statuses[0].callId,
+        err: expect.objectContaining({ message: 'dispose fixture failed' }),
+      }),
+    ),
+  );
+  expect(await socket.timeout(1000).emitWithAck('health:check')).toMatchObject({
+    status: 'ok',
+  });
 });

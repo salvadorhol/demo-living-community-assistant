@@ -1,3 +1,4 @@
+import { silentLogger, type AppLogger } from './logger.ts';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +25,7 @@ export function createSocketServer(
   audioFactory: AudioSessionFactory | VoiceAgentFactory = echoAudio,
   callStore?: CallStore,
   maxCallMs?: number,
+  logger: AppLogger = silentLogger,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -50,6 +52,10 @@ export function createSocketServer(
   io.use(async (socket, next) => {
     const token: unknown = socket.handshake.auth.token;
     if (typeof token !== 'string' || !token.trim()) {
+      logger.warn(
+        { event: 'socket.authentication_missing', socketId: socket.id },
+        'Socket authentication required',
+      );
       next(
         Object.assign(new Error('Authentication required.'), {
           data: { code: 'UNAUTHENTICATED' },
@@ -64,7 +70,11 @@ export function createSocketServer(
         decoded.firebase?.sign_in_provider ?? 'unknown';
       socket.data.authTime = decoded.auth_time;
       next();
-    } catch {
+    } catch (err) {
+      logger.warn(
+        { event: 'socket.authentication_failed', err, socketId: socket.id },
+        'Socket authentication failed',
+      );
       next(
         Object.assign(new Error('Authentication failed.'), {
           data: { code: 'UNAUTHENTICATED' },
@@ -74,7 +84,18 @@ export function createSocketServer(
   });
   const finishers = new Set<() => Promise<void>>();
   const rooms = new Map<string, { roomId: string; members: Set<string> }>();
-  io.on('connection', async (socket) => {
+  io.engine.on('connection_error', (err) =>
+    logger.warn(
+      { event: 'socket.transport_failed', code: err.code },
+      'Socket transport failed',
+    ),
+  );
+  io.on('connection', (socket) => {
+    const log = logger.child({ socketId: socket.id });
+    log.info({ event: 'socket.connected' }, 'Socket connected');
+    socket.on('error', (err) =>
+      log.error({ event: 'socket.error', err }, 'Socket error'),
+    );
     const uid = socket.data.uid;
     let room = rooms.get(uid);
     if (!room) {
@@ -83,7 +104,11 @@ export function createSocketServer(
     }
     const session = room;
     session.members.add(socket.id);
-    socket.once('disconnect', () => {
+    socket.once('disconnect', (reason) => {
+      log.info(
+        { event: 'socket.disconnected', reason, roomId: session.roomId },
+        'Socket disconnected',
+      );
       session.members.delete(socket.id);
       if (!session.members.size && rooms.get(uid) === session)
         rooms.delete(uid);
@@ -102,23 +127,34 @@ export function createSocketServer(
             ? {}
             : { authTime: socket.data.authTime }),
         },
+        log.child({ roomId: session.roomId }),
       );
       finishers.add(finish);
       socket.once('disconnect', () => {
-        void finish().finally(() => finishers.delete(finish));
+        void finish()
+          .catch((err) =>
+            log.error(
+              { event: 'call.finalization_failed', err },
+              'Disconnect finalization failed',
+            ),
+          )
+          .finally(() => finishers.delete(finish));
       });
     }
     socket.emit('health:status', health());
     socket.on('health:check', (acknowledge) => {
       if (typeof acknowledge === 'function') acknowledge(health());
     });
-    try {
-      await socket.join(session.roomId);
-      if (socket.connected)
-        socket.emit('voice:session:ready', { roomId: session.roomId });
-    } catch {
-      socket.disconnect(true);
-    }
+    void Promise.resolve()
+      .then(() => socket.join(session.roomId))
+      .then(() => {
+        if (socket.connected)
+          socket.emit('voice:session:ready', { roomId: session.roomId });
+      })
+      .catch((err) => {
+        log.error({ event: 'socket.room_failed', err }, 'Room setup failed');
+        socket.disconnect(true);
+      });
   });
 
   let closing: Promise<void> | undefined;
@@ -128,6 +164,10 @@ export function createSocketServer(
     httpServer,
     close: () =>
       (closing ??= (async () => {
+        logger.info(
+          { event: 'server.finalizing', pendingCalls: finishers.size },
+          'Finalizing active calls',
+        );
         await Promise.all([...finishers].map((finish) => finish()));
         await new Promise<void>((resolve, reject) => {
           io.close((error) => {

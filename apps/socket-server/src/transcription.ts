@@ -1,3 +1,4 @@
+import { silentLogger } from './logger.ts';
 import WebSocket from 'ws';
 import { createHash } from 'node:crypto';
 import { AGENT_CONFIG, readOpenAIKey } from './agent-config.ts';
@@ -13,6 +14,10 @@ export function withTranscription(
   return {
     kind: 'conversation',
     create(context) {
+      let log = (context.logger ?? silentLogger).child({
+        component: 'transcription',
+      });
+      let failed = false;
       let socket: WebSocket | undefined;
       let disposed = false;
       let available = false;
@@ -23,8 +28,13 @@ export function withTranscription(
       let rejectSetup: ((error: Error) => void) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const text = new Map<string, string>();
-      const fail = () => {
-        if (disposed) return;
+      const fail = (err: unknown = new Error('Transcription unavailable')) => {
+        if (disposed || failed) return;
+        failed = true;
+        log.warn(
+          { event: 'transcription.degraded', err },
+          'Live transcription unavailable; voice continues',
+        );
         available = false;
         context.degraded?.();
         rejectSetup?.(new Error('Transcription unavailable.'));
@@ -37,11 +47,11 @@ export function withTranscription(
         if (!available || !socket || socket.readyState !== WebSocket.OPEN)
           return;
         if (socket.bufferedAmount > AGENT_CONFIG.maxQueuedBytes) {
-          fail();
+          fail(new Error('Transcription input backlog exceeded'));
           return;
         }
         socket.send(JSON.stringify(event), (error) => {
-          if (error) fail();
+          if (error) fail(error);
         });
       }
       function commit() {
@@ -75,10 +85,18 @@ export function withTranscription(
                 },
               },
             );
-            timer = setTimeout(fail, AGENT_CONFIG.setupTimeoutMs);
+            timer = setTimeout(
+              () => fail(new Error('Transcription initialization timed out')),
+              AGENT_CONFIG.setupTimeoutMs,
+            );
             socket.on('error', fail);
-            socket.on('close', () => {
-              if (available) fail();
+            socket.on('close', (code) => {
+              if (!failed)
+                fail(
+                  Object.assign(new Error('Transcription upstream closed'), {
+                    code: String(code),
+                  }),
+                );
             });
             socket.on('open', () => {
               if (disposed) return;
@@ -107,10 +125,12 @@ export function withTranscription(
                 if (
                   event.type === 'session.created' &&
                   typeof event.session?.id === 'string'
-                )
+                ) {
+                  log = log.child({ transcriptionSessionId: event.session.id });
                   context.metadata?.({
                     transcriptionSessionId: event.session.id,
                   });
+                }
                 if (event.type === 'session.updated') {
                   clearTimeout(timer);
                   rejectSetup = undefined;
@@ -120,7 +140,17 @@ export function withTranscription(
                   event.type ===
                     'conversation.item.input_audio_transcription.failed'
                 )
-                  fail();
+                  fail(
+                    Object.assign(
+                      new Error('Transcription provider rejected a command'),
+                      {
+                        code:
+                          typeof event.error?.code === 'string'
+                            ? event.error.code
+                            : undefined,
+                      },
+                    ),
+                  );
                 else if (
                   event.type ===
                     'conversation.item.input_audio_transcription.delta' ||
@@ -154,11 +184,11 @@ export function withTranscription(
                     if (!outstanding) settle?.();
                   }
                 }
-              } catch {
-                fail();
+              } catch (err) {
+                fail(err);
               }
             });
-          }).catch(() => context.degraded?.());
+          }).catch((err) => fail(err));
         },
         beginInput() {
           agent.beginInput();
@@ -184,6 +214,10 @@ export function withTranscription(
           if (available && outstanding)
             await new Promise<void>((resolve) => {
               const timeout = setTimeout(() => {
+                log.warn(
+                  { event: 'transcription.finish_timeout', outstanding },
+                  'Transcription finalization timed out',
+                );
                 context.degraded?.();
                 resolve();
               }, 1500);

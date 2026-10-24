@@ -1,3 +1,4 @@
+import { createLogger } from './logger.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import type { VoiceAgentFactory } from './conversation.ts';
@@ -16,6 +17,11 @@ class Upstream extends EventEmitter {
   }
 }
 function setup() {
+  const logs: string[] = [];
+  const logger = createLogger(
+    { LOG_FORMAT: 'json' },
+    { write: (line) => logs.push(String(line)) },
+  );
   const upstream = new Upstream();
   let context: Parameters<VoiceAgentFactory['create']>[0];
   const voice = {
@@ -39,6 +45,7 @@ function setup() {
   );
   const agent = factory.create({
     uid: 'owner',
+    logger,
     output: vi.fn(),
     transcript,
     degraded,
@@ -52,6 +59,7 @@ function setup() {
   }
   return {
     upstream,
+    logs,
     agent,
     voice,
     transcript,
@@ -118,6 +126,14 @@ it('degrades transcription without taking down voice and bounds ASR backlog', as
   f.upstream.bufferedAmount = 100000;
   f.agent.write(new Uint8Array(4800));
   expect(f.degraded).toHaveBeenCalled();
+  expect(f.logs.map((line) => JSON.parse(line))).toContainEqual(
+    expect.objectContaining({
+      event: 'transcription.degraded',
+      err: expect.objectContaining({
+        message: 'Transcription input backlog exceeded',
+      }),
+    }),
+  );
   f.agent.write(new Uint8Array(4800));
   expect(f.voice.write).toHaveBeenCalledTimes(2);
   expect(f.voice.dispose).not.toHaveBeenCalled();

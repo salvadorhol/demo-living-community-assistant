@@ -1,3 +1,4 @@
+import { silentLogger } from './logger.ts';
 import WebSocket from 'ws';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
@@ -20,7 +21,15 @@ export function createOpenAIAudio(
 ): VoiceAgentFactory {
   return {
     kind: 'conversation',
-    create({ uid, output, transcript, turnEnded, metadata }) {
+    create({
+      uid,
+      output,
+      transcript,
+      turnEnded,
+      metadata,
+      logger = silentLogger,
+    }) {
+      let log = logger.child({ component: 'openai-voice' });
       const texts = new Map<string, TranscriptUpdate>();
       let socket: WebSocket | undefined;
       let initialization: Promise<void> | undefined;
@@ -54,7 +63,7 @@ export function createOpenAIAudio(
         if (socket.bufferedAmount > AGENT_CONFIG.maxQueuedBytes)
           throw new Error('Voice input backlog exceeded.');
         socket.send(JSON.stringify(event), (error) => {
-          if (error) fail();
+          if (error) fail(error);
         });
       }
       function dispose() {
@@ -72,8 +81,12 @@ export function createOpenAIAudio(
         interrupted = undefined;
         socket?.terminate();
       }
-      function fail() {
+      function fail(err: unknown = new Error('Voice provider failed')) {
         if (disposed) return;
+        log.error(
+          { event: 'voice.provider_failed', err },
+          'Voice provider failed',
+        );
         dispose();
         output({
           type: 'error',
@@ -97,6 +110,10 @@ export function createOpenAIAudio(
         });
       }
       function interrupt(cancelResponse = true) {
+        log.debug(
+          { event: 'voice.interrupted', responseId },
+          'Assistant playback interrupted',
+        );
         if (cancelResponse && responseId) {
           cancelled.add(responseId);
           send({ type: 'response.cancel', response_id: responseId });
@@ -121,8 +138,8 @@ export function createOpenAIAudio(
         truncateTimer = setTimeout(() => {
           try {
             truncate();
-          } catch {
-            fail();
+          } catch (err) {
+            fail(err);
           }
         }, 250);
       }
@@ -246,8 +263,8 @@ export function createOpenAIAudio(
               pumpTimer = setInterval(() => {
                 try {
                   pump();
-                } catch {
-                  fail();
+                } catch (err) {
+                  fail(err);
                 }
               }, 40);
             break;
@@ -260,7 +277,13 @@ export function createOpenAIAudio(
             const response = event.response as { id: string; status: string };
             if (responseId === response.id) responseId = undefined;
             if (response.status === 'failed')
-              throw new Error('Voice response failed');
+              throw Object.assign(new Error('Voice response failed'), {
+                code: (
+                  event.response as {
+                    status_details?: { error?: { code?: string } };
+                  }
+                ).status_details?.error?.code,
+              });
             if (cancelled.size > 128)
               cancelled.delete(cancelled.values().next().value as string);
             break;
@@ -269,7 +292,10 @@ export function createOpenAIAudio(
             const error = event.error as { code?: string } | undefined;
             // Server VAD can cancel before our explicit interruption command arrives.
             if (error?.code === 'response_cancel_not_active') return;
-            throw new Error('Voice provider rejected a command');
+            throw Object.assign(
+              new Error('Voice provider rejected a command'),
+              { code: error?.code },
+            );
           }
         }
       }
@@ -294,9 +320,18 @@ export function createOpenAIAudio(
                 },
               },
             );
-            setupTimer = setTimeout(fail, AGENT_CONFIG.setupTimeoutMs);
+            setupTimer = setTimeout(
+              () => fail(new Error('Voice initialization timed out')),
+              AGENT_CONFIG.setupTimeoutMs,
+            );
             socket.on('error', fail);
-            socket.on('close', fail);
+            socket.on('close', (code) =>
+              fail(
+                Object.assign(new Error('Voice upstream closed'), {
+                  code: String(code),
+                }),
+              ),
+            );
             socket.on('open', () => {
               try {
                 send({
@@ -317,8 +352,8 @@ export function createOpenAIAudio(
                     },
                   },
                 });
-              } catch {
-                fail();
+              } catch (err) {
+                fail(err);
               }
             });
             socket.on('message', (data) => {
@@ -328,16 +363,22 @@ export function createOpenAIAudio(
                 if (
                   event.type === 'session.created' &&
                   typeof event.session?.id === 'string'
-                )
+                ) {
+                  log = log.child({ providerSessionId: event.session.id });
                   metadata?.({ providerSessionId: event.session.id });
+                }
                 if (event.type === 'session.updated' && !ready) {
+                  log.info(
+                    { event: 'voice.configured' },
+                    'Voice provider configured',
+                  );
                   ready = true;
                   clearTimeout(setupTimer);
                   rejectSetup = undefined;
                   resolve();
                 } else message(event);
-              } catch {
-                fail();
+              } catch (err) {
+                fail(err);
               }
             });
           });

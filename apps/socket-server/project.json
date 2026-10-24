@@ -19,7 +19,7 @@
       "cache": false,
       "continuous": true,
       "options": {
-        "command": "node --env-file-if-exists=apps/socket-server/.env --watch apps/socket-server/src/main.ts"
+        "command": "node --env-file-if-exists=apps/socket-server/.env --watch --watch-preserve-output --unhandled-rejections=strict apps/socket-server/src/main.ts"
       }
     },
     "dev": {
@@ -44,7 +44,7 @@
       "cache": false,
       "continuous": true,
       "options": {
-        "command": "node --env-file-if-exists=apps/socket-server/.env --watch apps/socket-server/src/main.ts",
+        "command": "node --env-file-if-exists=apps/socket-server/.env --watch --watch-preserve-output --unhandled-rejections=strict apps/socket-server/src/main.ts",
         "env": {
           "FIREBASE_PROJECT_ID": "demo-living-community-assistant",
           "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",

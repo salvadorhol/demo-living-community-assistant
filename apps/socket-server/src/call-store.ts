@@ -86,12 +86,16 @@ export function firebaseCallStore(app: App, bucketName: string): CallStore {
     },
   };
 }
-export async function retry<T>(operation: () => Promise<T>): Promise<T> {
+export async function retry<T>(
+  operation: () => Promise<T>,
+  onRetry?: (error: unknown, attempt: number) => void,
+): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await operation();
     } catch (error) {
       if (attempt === 2) throw error;
+      onRetry?.(error, attempt + 1);
       await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
     }
   }

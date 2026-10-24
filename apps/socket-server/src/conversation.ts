@@ -1,3 +1,4 @@
+import { silentLogger, type AppLogger } from './logger.ts';
 import type { Socket } from 'socket.io';
 import type {
   AudioOutputEvent,
@@ -24,6 +25,7 @@ export interface VoiceAgentFactory {
   kind: 'conversation';
   create(context: {
     uid: string;
+    logger?: AppLogger;
     transcript?(event: TranscriptUpdate): void;
     turnEnded?(): void;
     degraded?(): void;
@@ -46,6 +48,7 @@ export function attachConversation(
   maxCallMs = 60 * 60 * 1000,
   roomId = socket.data.uid,
   authentication: Record<string, unknown> = {},
+  logger: AppLogger = silentLogger,
 ) {
   let agent: VoiceAgent | undefined;
   let generation = 0;
@@ -56,11 +59,24 @@ export function attachConversation(
   let closed = false;
   let lastCallId: string | undefined;
   const retained = new Map<string, SavedCall>();
+  function endBackground(reason: string) {
+    void end(reason).catch((err) =>
+      logger.error(
+        { event: 'call.finalization_failed', err, callId: call?.id, reason },
+        'Call finalization failed',
+      ),
+    );
+  }
   async function end(reason: string) {
     if (ending) return ending;
     const current = call;
     if (!current) return;
     clearTimeout(limit);
+    const started = Date.now();
+    logger.info(
+      { event: 'call.ending', callId: current.id, reason },
+      'Ending call',
+    );
     current.ending();
     lastCallId = current.id;
     input = undefined;
@@ -68,17 +84,34 @@ export function attachConversation(
     ending = (async () => {
       try {
         old?.pause();
-      } catch {
-        /* A failed provider can still have a recording. */
+      } catch (err) {
+        logger.debug(
+          { event: 'voice.pause_failed', err, callId: current.id },
+          'Provider already unavailable during finalization',
+        );
       }
       try {
         await old?.finish?.();
-      } catch {
+      } catch (err) {
+        logger.warn(
+          { event: 'transcription.finish_failed', err, callId: current.id },
+          'Transcription finalization failed',
+        );
         current.degraded();
       }
       dispose();
       call = undefined;
       await current.finish(reason);
+      logger.info(
+        {
+          event: 'call.ended',
+          callId: current.id,
+          reason,
+          state: current.state,
+          durationMs: Date.now() - started,
+        },
+        'Call finalization completed',
+      );
       if (current.state === 'failed') retained.set(current.id, current);
     })().finally(() => {
       ending = undefined;
@@ -100,7 +133,7 @@ export function attachConversation(
       return;
     }
     ack({ ok: true });
-    if (call?.id === value.callId) void end('ended');
+    if (call?.id === value.callId) endBackground('ended');
   });
   socket.on('call:retry', async (value, ack) => {
     if (typeof ack !== 'function') return;
@@ -116,7 +149,18 @@ export function attachConversation(
       return;
     }
     ack({ ok: true });
-    await current.finish('ended');
+    logger.info(
+      { event: 'call.retry', callId: current.id },
+      'Retrying call save',
+    );
+    try {
+      await current.finish('ended');
+    } catch (err) {
+      logger.error(
+        { event: 'call.retry_failed', err, callId: current.id },
+        'Call retry failed',
+      );
+    }
     if (current.state === 'saved') retained.delete(current.id);
   });
   let input: { id: string; sequence: number; ready: boolean } | undefined;
@@ -154,7 +198,7 @@ export function attachConversation(
         break;
       case 'error':
         socket.emit('voice:session:error', event.error);
-        void end('provider_error');
+        endBackground('provider_error');
         break;
     }
   }
@@ -192,6 +236,7 @@ export function attachConversation(
     const run = { id: value.streamId, sequence: 0, ready: false };
     input = run;
     initializing = true;
+    const started = Date.now();
     try {
       if (!agent) {
         const owner = ++generation;
@@ -204,6 +249,7 @@ export function attachConversation(
           (update) => {
             if (socket.connected) socket.emit('transcript:update', update);
           },
+          logger,
         );
         call = current;
         await current.start(roomId, authentication);
@@ -217,11 +263,12 @@ export function attachConversation(
             code: 'VOICE_UNAVAILABLE',
             message: 'Call duration limit reached.',
           });
-          void end('duration_limit');
+          endBackground('duration_limit');
         }, maxCallMs);
         limit.unref();
         agent = factory.create({
           uid: socket.data.uid,
+          logger: logger.child({ callId: current.id }),
           transcript: (value) => {
             if (owner === generation) current.update(value);
           },
@@ -242,10 +289,35 @@ export function attachConversation(
       }
       session.beginInput();
       run.ready = true;
+      logger.info(
+        {
+          event: 'voice.ready',
+          callId: call?.id,
+          durationMs: Date.now() - started,
+        },
+        'Voice input ready',
+      );
       call?.pause(false);
       ack({ ok: true });
-    } catch {
-      if (input === run) await end('start_failed');
+    } catch (err) {
+      logger.error(
+        { event: 'conversation.operation_failed', err, callId: call?.id },
+        'Conversation operation failed',
+      );
+      if (input === run) {
+        try {
+          await end('start_failed');
+        } catch (finalizeError) {
+          logger.error(
+            {
+              event: 'call.finalization_failed',
+              err: finalizeError,
+              callId: call?.id,
+            },
+            'Failed start cleanup failed',
+          );
+        }
+      }
       ack(failed());
     } finally {
       initializing = false;
@@ -281,8 +353,12 @@ export function attachConversation(
       call?.recording.append(`input-${input.id}`, value.data, true);
       input.sequence++;
       ack({ ok: true });
-    } catch {
-      void end('provider_error');
+    } catch (err) {
+      logger.error(
+        { event: 'conversation.operation_failed', err, callId: call?.id },
+        'Conversation operation failed',
+      );
+      endBackground('provider_error');
       socket.emit('voice:session:error', {
         code: 'VOICE_UNAVAILABLE',
         message: 'Voice connection fell behind or failed. Try Start again.',
@@ -306,10 +382,14 @@ export function attachConversation(
       if (ready) {
         agent?.pause();
         call?.pause(true);
-      } else void end('cancelled'); // Cancel initialization rather than leaving a late connection alive.
+      } else endBackground('cancelled'); // Cancel initialization rather than leaving a late connection alive.
       ack({ ok: true });
-    } catch {
-      void end('provider_error');
+    } catch (err) {
+      logger.error(
+        { event: 'conversation.operation_failed', err, callId: call?.id },
+        'Conversation operation failed',
+      );
+      endBackground('provider_error');
       ack(failed());
     }
   });
@@ -324,8 +404,12 @@ export function attachConversation(
     try {
       agent?.progress(value);
       call?.recording.progress(value.streamId, value.playedMs);
-    } catch {
-      void end('provider_error');
+    } catch (err) {
+      logger.error(
+        { event: 'conversation.operation_failed', err, callId: call?.id },
+        'Conversation operation failed',
+      );
+      endBackground('provider_error');
       socket.emit('voice:session:error', {
         code: 'VOICE_UNAVAILABLE',
         message: 'Voice connection failed. Try Start again.',
@@ -333,7 +417,7 @@ export function attachConversation(
     }
   });
   socket.once('disconnect', () => {
-    void end('disconnect');
+    endBackground('disconnect');
   });
   return () => {
     closed = true;
