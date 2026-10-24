@@ -14,3 +14,7 @@ output "health_url" {
   description = "Available after nx run functions:deploy succeeds."
   value       = "https://us-central1-${var.project_id}.cloudfunctions.net/health"
 }
+
+output "recordings_bucket" {
+  value = google_storage_bucket.recordings.name
+}

@@ -72,3 +72,38 @@ resource "google_project_iam_member" "functions_firestore_user" {
   depends_on = [google_project_service.deployment]
 }
 
+
+resource "google_storage_bucket" "recordings" {
+  provider                    = google-beta
+  project                     = var.project_id
+  name                        = "${var.project_id}-call-recordings"
+  location                    = var.firestore_location_id
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  depends_on                  = [google_project_service.deployment]
+}
+
+resource "google_firebase_storage_bucket" "recordings" {
+  provider  = google-beta
+  project   = var.project_id
+  bucket_id = google_storage_bucket.recordings.name
+}
+
+# Set to the separately deployed socket server's service account to grant only
+# database and recording-object access. Never grant public bucket access.
+resource "google_storage_bucket_iam_member" "socket_recordings" {
+  provider = google-beta
+  count    = var.socket_service_account == null ? 0 : 1
+  bucket   = google_storage_bucket.recordings.name
+  role     = "roles/storage.objectUser"
+  member   = "serviceAccount:${var.socket_service_account}"
+}
+
+resource "google_project_iam_member" "socket_firestore" {
+  provider = google-beta
+  count    = var.socket_service_account == null ? 0 : 1
+  project  = var.project_id
+  role     = "roles/datastore.user"
+  member   = "serviceAccount:${var.socket_service_account}"
+}

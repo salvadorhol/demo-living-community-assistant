@@ -27,3 +27,9 @@ variable "hosting_app_id" {
   type        = string
   default     = null
 }
+
+variable "socket_service_account" {
+  description = "Optional service account email for the standalone socket server."
+  type        = string
+  default     = null
+}
