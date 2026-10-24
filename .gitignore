@@ -87,3 +87,7 @@ override.tf.json
 *.tsbuildinfo
 playwright-report/
 test-results/
+
+_bmad/
+_bmad-output/
+.agents/skills/bmad-*
