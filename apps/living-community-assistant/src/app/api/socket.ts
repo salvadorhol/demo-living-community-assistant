@@ -82,6 +82,9 @@ export function startSocket(
   socket.on('voice:session:error', (error) =>
     emitAudio({ type: 'error', error }),
   );
+  socket.on('voice:session:warning', (warning) =>
+    emitAudio({ type: 'warning', warning }),
+  );
   socket.on('audio:output:start', (stream) =>
     emitAudio({ type: 'start', stream }),
   );

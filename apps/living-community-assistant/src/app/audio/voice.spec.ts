@@ -209,3 +209,47 @@ it('releases capture on asynchronous provider failure and ignores late speech af
   );
   voice.dispose();
 });
+
+it('surfaces reply limits while keeping microphone capture and input streaming active', async () => {
+  const { voice, connection, status } = setup();
+  await voice.start();
+  const listener = connection.onAudio.mock.calls[0][0];
+  listener({
+    type: 'warning',
+    warning: {
+      code: 'VOICE_OUTPUT_LIMIT',
+      message: 'Reply stopped; keep speaking.',
+    },
+  });
+  expect(status).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      state: 'streaming',
+      warning: 'Reply stopped; keep speaking.',
+    }),
+  );
+  expect(mocks.dispose).not.toHaveBeenCalled();
+  expect(connection.stopAudio).not.toHaveBeenCalled();
+  mocks.chunk(new Uint8Array(1920));
+  await vi.waitFor(() => expect(connection.sendAudio).toHaveBeenCalledOnce());
+  expect(status).toHaveBeenLastCalledWith(
+    expect.objectContaining({ warning: 'Reply stopped; keep speaking.' }),
+  );
+  voice.dispose();
+});
+it('shows configuration errors and releases the microphone', async () => {
+  const { voice, connection, status } = setup();
+  await voice.start();
+  connection.onAudio.mock.calls[0][0]({
+    type: 'error',
+    error: {
+      code: 'VOICE_CONFIGURATION_ERROR',
+      message: 'Ask the administrator to check server settings.',
+    },
+  });
+  expect(status).toHaveBeenLastCalledWith({
+    state: 'error',
+    error: 'Ask the administrator to check server settings.',
+  });
+  expect(mocks.dispose).toHaveBeenCalled();
+  voice.dispose();
+});

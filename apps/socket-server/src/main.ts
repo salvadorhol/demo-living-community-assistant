@@ -1,3 +1,4 @@
+import { ConfigurationError } from './configuration-error.ts';
 import { createLogger } from './logger.ts';
 import { installFatalLogging, installShutdown } from './lifecycle.ts';
 import { initializeApp } from 'firebase-admin/app';
@@ -34,7 +35,11 @@ try {
   const server = createSocketServer(
     config,
     (token) => getAuth(firebase).verifyIdToken(token),
-    withTranscription(createOpenAIAudio()),
+    withTranscription(
+      createOpenAIAudio(undefined, undefined, {
+        maxOutputQueueMs: config.voiceOutputQueueMs,
+      }),
+    ),
     firebaseCallStore(firebase, config.storageBucket),
     config.maxCallMs,
     logger,
@@ -55,6 +60,7 @@ try {
         host: config.host,
         port: config.port,
         voiceConfigured: Boolean(process.env.OPENAI_API_KEY),
+        voiceOutputQueueMs: config.voiceOutputQueueMs,
         emulators: [
           'FIREBASE_AUTH_EMULATOR_HOST',
           'FIRESTORE_EMULATOR_HOST',
@@ -66,7 +72,13 @@ try {
   });
 } catch (err) {
   logger.fatal(
-    { event: 'process.start_failed', err },
+    {
+      event:
+        err instanceof ConfigurationError
+          ? 'process.configuration_failed'
+          : 'process.start_failed',
+      err,
+    },
     'Socket server startup failed',
   );
   logger.flush();

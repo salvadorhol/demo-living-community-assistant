@@ -18,7 +18,10 @@ class Upstream extends EventEmitter {
     this.emit('message', Buffer.from(JSON.stringify(value)));
   }
 }
-function setup(key: string | undefined = 'test-key') {
+function setup(
+  key: string | undefined = 'test-key',
+  maxOutputQueueMs?: number,
+) {
   const logs: string[] = [];
   const logger = createLogger(
     { LOG_FORMAT: 'json' },
@@ -27,7 +30,7 @@ function setup(key: string | undefined = 'test-key') {
   const upstream = new Upstream();
   const connect = vi.fn(() => upstream as unknown as WebSocket);
   const events: AudioOutputEvent[] = [];
-  const factory = createOpenAIAudio(key, connect);
+  const factory = createOpenAIAudio(key, connect, { maxOutputQueueMs });
   const agent = factory.create({
     uid: 'private-user',
     logger,
@@ -266,3 +269,137 @@ it('rejects missing credentials and bounds upstream backpressure', async () => {
   expect(() => agent.write(new Uint8Array(1920))).toThrow('backlog');
   agent.dispose();
 });
+
+it('accepts a normal 20-second generation burst above the previous 10-second cap and paces output', async () => {
+  const f = setup();
+  await f.initialize();
+  f.upstream.event({ type: 'response.created', response: { id: 'burst' } });
+  f.upstream.event({
+    type: 'response.output_audio.delta',
+    response_id: 'burst',
+    item_id: 'burst',
+    content_index: 0,
+    delta: Buffer.alloc(20 * 48000).toString('base64'),
+  });
+  expect(
+    f.events.filter(
+      (event) => event.type === 'error' || event.type === 'warning',
+    ),
+  ).toHaveLength(0);
+  expect(f.upstream.terminate).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(80);
+  const chunks = f.events.filter((event) => event.type === 'chunk');
+  expect(chunks).toHaveLength(2);
+  for (const event of chunks)
+    if (event.type === 'chunk') expect(event.chunk.data.byteLength).toBe(1920);
+  f.agent.dispose();
+});
+
+it.each([false, true])(
+  'cancels an oversized reply without ending the session (generation finished=%s)',
+  async (finished) => {
+    const f = setup('test-key', 1000);
+    await f.initialize();
+    f.upstream.event({ type: 'response.created', response: { id: 'long' } });
+    const delta = (bytes: number, id = 'long') => ({
+      type: 'response.output_audio.delta',
+      response_id: id,
+      item_id: id,
+      content_index: 0,
+      delta: Buffer.alloc(bytes).toString('base64'),
+    });
+    f.upstream.event(delta(48000));
+    await vi.advanceTimersByTimeAsync(40);
+    if (finished)
+      f.upstream.event({
+        type: 'response.done',
+        response: { id: 'long', status: 'completed' },
+      });
+    f.upstream.event(delta(4800));
+    expect(f.events.at(-1)).toMatchObject({
+      type: 'warning',
+      warning: { code: 'VOICE_OUTPUT_LIMIT' },
+    });
+    expect(f.events.some((event) => event.type === 'clear')).toBe(true);
+    expect(f.events.some((event) => event.type === 'error')).toBe(false);
+    expect(f.upstream.terminate).not.toHaveBeenCalled();
+    expect(
+      f.upstream.sent.some((event) => event.type === 'response.cancel'),
+    ).toBe(!finished);
+    const eventCount = f.events.length;
+    f.upstream.event(delta(4800));
+    expect(f.events).toHaveLength(eventCount);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(f.upstream.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'conversation.item.truncate',
+        item_id: 'long',
+      }),
+    );
+    expect(() => f.agent.write(new Uint8Array(1920))).not.toThrow();
+    f.upstream.event({ type: 'response.created', response: { id: 'next' } });
+    f.upstream.event(delta(1920, 'next'));
+    await vi.advanceTimersByTimeAsync(40);
+    expect(f.events.at(-1)?.type).toBe('chunk');
+    expect(f.logs.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        event: 'voice.output_limit',
+        limitMs: 1000,
+        queuedMs: 960,
+        incomingBytes: 4800,
+      }),
+    );
+    f.agent.dispose();
+  },
+);
+
+it('rejects queue configuration before opening a connection', () => {
+  expect(() =>
+    createOpenAIAudio('key', vi.fn(), { maxOutputQueueMs: -1 }),
+  ).toThrow(/VOICE_OUTPUT_QUEUE_MS/);
+});
+
+it.each([false, true])(
+  'surfaces session configuration rejection before/after initialization=%s',
+  async (initialized) => {
+    const f = setup();
+    const pending = f.agent.initialize();
+    f.upstream.emit('open');
+    if (initialized) {
+      f.upstream.event({ type: 'session.updated' });
+      await pending;
+      f.agent.beginInput();
+    }
+    const command = f.upstream.sent.at(-1);
+    const rejection = initialized
+      ? undefined
+      : expect(pending).rejects.toMatchObject({ name: 'ConfigurationError' });
+    f.upstream.event({
+      type: 'error',
+      error: {
+        type: 'invalid_request_error',
+        code: 'invalid_value',
+        param: 'session.audio.output.voice',
+        event_id: command?.event_id,
+        message: 'secret provider payload',
+      },
+    });
+    await rejection;
+    expect(f.events.at(-1)).toMatchObject({
+      type: 'error',
+      error: {
+        code: 'VOICE_CONFIGURATION_ERROR',
+        message: expect.stringContaining('administrator'),
+      },
+    });
+    expect(JSON.stringify(f.events)).not.toContain('secret');
+    expect(f.logs.map((line) => JSON.parse(line))).toContainEqual(
+      expect.objectContaining({
+        event: 'voice.configuration_rejected',
+        providerCode: 'invalid_value',
+        parameter: 'session.audio.output.voice',
+      }),
+    );
+    f.agent.dispose();
+  },
+);

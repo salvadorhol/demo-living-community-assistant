@@ -243,6 +243,7 @@ export function App() {
           )}
           {callError && <p role="alert">{callError}</p>}
           {socketStatus.error && <p role="alert">{socketStatus.error}</p>}
+          {voiceStatus.warning && <p role="alert">{voiceStatus.warning}</p>}
           {voiceStatus.error && <p role="alert">{voiceStatus.error}</p>}
           {playbackIssue && (
             <div role="alert">

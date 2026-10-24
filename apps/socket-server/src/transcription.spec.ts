@@ -139,3 +139,31 @@ it('degrades transcription without taking down voice and bounds ASR backlog', as
   expect(f.voice.dispose).not.toHaveBeenCalled();
   f.agent.dispose();
 });
+
+it('logs transcription configuration rejection while keeping voice available', async () => {
+  const f = setup();
+  const starting = f.agent.initialize();
+  await Promise.resolve();
+  f.upstream.emit('open');
+  f.upstream.event({
+    type: 'error',
+    error: {
+      type: 'invalid_request_error',
+      code: 'invalid_value',
+      param: 'session.audio.input.transcription.model',
+      message: 'private provider payload',
+    },
+  });
+  await expect(starting).resolves.toBeUndefined();
+  expect(f.degraded).toHaveBeenCalledOnce();
+  expect(f.voice.dispose).not.toHaveBeenCalled();
+  expect(() => f.agent.write(new Uint8Array(1920))).not.toThrow();
+  expect(f.logs.map((line) => JSON.parse(line))).toContainEqual(
+    expect.objectContaining({
+      event: 'transcription.configuration_failed',
+      err: expect.objectContaining({ type: 'ConfigurationError' }),
+    }),
+  );
+  expect(f.logs.join('')).not.toContain('private provider payload');
+  f.agent.dispose();
+});

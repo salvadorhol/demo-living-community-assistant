@@ -1,3 +1,4 @@
+import { ConfigurationError } from './configuration-error.ts';
 import { createLogger } from './logger.ts';
 import type { AddressInfo } from 'node:net';
 import type { DecodedIdToken } from 'firebase-admin/auth';
@@ -227,4 +228,59 @@ it('handles detached End failures without an unhandled rejection and records cal
   expect(await socket.timeout(1000).emitWithAck('health:check')).toMatchObject({
     status: 'ok',
   });
+});
+
+it('surfaces a recoverable reply warning without finalizing the call', async () => {
+  const socket = await client();
+  await socket
+    .timeout(1000)
+    .emitWithAck('audio:input:start', stream('warning'));
+  const warning = new Promise((resolve) =>
+    socket.once('voice:session:warning', resolve),
+  );
+  outputs[0]({
+    type: 'warning',
+    warning: {
+      code: 'VOICE_OUTPUT_LIMIT',
+      message: 'Reply stopped; keep speaking.',
+    },
+  });
+  expect(await warning).toMatchObject({ code: 'VOICE_OUTPUT_LIMIT' });
+  expect(agents[0].dispose).not.toHaveBeenCalled();
+  expect(
+    await socket
+      .timeout(1000)
+      .emitWithAck('audio:input:chunk', {
+        streamId: 'warning',
+        sequence: 0,
+        data: new Uint8Array(1920),
+      }),
+  ).toEqual({ ok: true });
+});
+it('catches factory configuration exceptions and surfaces safe event and acknowledgement errors', async () => {
+  create.mockImplementationOnce(() => {
+    throw new ConfigurationError('Invalid server setting');
+  });
+  const socket = await client();
+  const error = new Promise((resolve) =>
+    socket.once('voice:session:error', resolve),
+  );
+  expect(
+    await socket
+      .timeout(1000)
+      .emitWithAck('audio:input:start', stream('bad-config')),
+  ).toMatchObject({
+    ok: false,
+    code: 'VOICE_CONFIGURATION_ERROR',
+    message: expect.stringContaining('administrator'),
+  });
+  expect(await error).toMatchObject({ code: 'VOICE_CONFIGURATION_ERROR' });
+  expect(await socket.timeout(1000).emitWithAck('health:check')).toMatchObject({
+    status: 'ok',
+  });
+  expect(
+    await socket
+      .timeout(1000)
+      .emitWithAck('audio:input:start', stream('fixed-config')),
+  ).toEqual({ ok: true });
 });

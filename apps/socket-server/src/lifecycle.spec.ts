@@ -34,7 +34,12 @@ it.each([
 ])('writes fatal diagnostics before exiting on %s', (_name, code, origin) => {
   const result = execute(code);
   expect(result.status).toBe(1);
-  expect(JSON.parse(result.stdout.trim())).toMatchObject({
+  const fatal = result.stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((entry) => entry.event === 'process.fatal');
+  expect(fatal).toMatchObject({
     event: 'process.fatal',
     origin,
     err: { message: 'fixture crash' },
@@ -56,7 +61,7 @@ it('logs startup configuration errors', () => {
     },
   );
   expect(result.status).toBe(1);
-  expect(result.stdout).toContain('process.start_failed');
+  expect(result.stdout).toContain('process.configuration_failed');
   expect(result.stdout).toContain('FIREBASE_PROJECT_ID is required');
 });
 it.each(['json', 'pretty'])('writes %s logs directly to stdout', (format) => {
@@ -143,3 +148,31 @@ it('does not terminate early when the watch supervisor forwards a second shutdow
   expect(result.stdout).toContain('process.stopped');
   expect(result.stdout.match(/process.shutdown"/g)).toHaveLength(1);
 });
+
+it.each([
+  ['LOG_FORMAT', 'broken', 'LOG_FORMAT'],
+  ['LOG_LEVEL', 'broken', 'LOG_LEVEL'],
+  ['VOICE_OUTPUT_QUEUE_MS', 'NaN', 'VOICE_OUTPUT_QUEUE_MS'],
+])(
+  'surfaces invalid %s configuration and exits unsuccessfully',
+  (name, value, message) => {
+    const result = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL('./main.ts', import.meta.url))],
+      {
+        env: {
+          ...process.env,
+          LOG_FORMAT: 'json',
+          FIREBASE_PROJECT_ID: 'demo-local',
+          [name]: value,
+        },
+        encoding: 'utf8',
+        timeout: 5000,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('process.configuration_failed');
+    expect(result.stdout).toContain(message);
+    expect(result.stdout).not.toContain('server.listening');
+  },
+);

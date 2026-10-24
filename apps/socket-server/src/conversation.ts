@@ -1,3 +1,4 @@
+import { ConfigurationError, voiceError } from './configuration-error.ts';
 import { silentLogger, type AppLogger } from './logger.ts';
 import type { Socket } from 'socket.io';
 import type {
@@ -164,12 +165,17 @@ export function attachConversation(
     if (current.state === 'saved') retained.delete(current.id);
   });
   let input: { id: string; sequence: number; ready: boolean } | undefined;
-  const failed = (): AudioAck => ({
-    ok: false,
-    code: 'AUDIO_FAILED',
-    message:
-      'Voice unavailable. Check server configuration and try Start again.',
-  });
+  const failed = (error?: unknown): AudioAck => {
+    const failure = voiceError(error);
+    return {
+      ok: false,
+      code:
+        error instanceof ConfigurationError
+          ? 'VOICE_CONFIGURATION_ERROR'
+          : 'AUDIO_FAILED',
+      message: failure.message,
+    };
+  };
   function dispose() {
     generation++;
     input = undefined;
@@ -195,6 +201,9 @@ export function attachConversation(
       case 'clear':
         call?.recording.clear(event.streamId);
         socket.emit('audio:output:clear', { streamId: event.streamId });
+        break;
+      case 'warning':
+        socket.emit('voice:session:warning', event.warning);
         break;
       case 'error':
         socket.emit('voice:session:error', event.error);
@@ -318,7 +327,9 @@ export function attachConversation(
           );
         }
       }
-      ack(failed());
+      if (err instanceof ConfigurationError)
+        socket.emit('voice:session:error', voiceError(err));
+      ack(failed(err));
     } finally {
       initializing = false;
     }

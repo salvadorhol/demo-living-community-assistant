@@ -56,6 +56,7 @@ export interface ServerToClientEvents {
   'call:status': (status: CallStatus) => void;
   'transcript:update': (update: TranscriptUpdate) => void;
   'voice:session:error': (error: VoiceSessionError) => void;
+  'voice:session:warning': (warning: VoiceSessionWarning) => void;
   'voice:session:ready': (session: VoiceRoomSession) => void;
   'audio:output:start': (stream: AudioStream) => void;
   'audio:output:chunk': (chunk: AudioChunk) => void;
@@ -85,7 +86,8 @@ export type AudioErrorCode =
   | 'INVALID_AUDIO'
   | 'INVALID_STREAM'
   | 'BUSY'
-  | 'AUDIO_FAILED';
+  | 'AUDIO_FAILED'
+  | 'VOICE_CONFIGURATION_ERROR';
 export type AudioAck =
   | { ok: true }
   | { ok: false; code: AudioErrorCode; message: string };
@@ -94,7 +96,8 @@ export type AudioOutputEvent =
   | { type: 'chunk'; chunk: AudioChunk }
   | { type: 'end'; streamId: string }
   | { type: 'clear'; streamId: string }
-  | { type: 'error'; error: VoiceSessionError };
+  | { type: 'error'; error: VoiceSessionError }
+  | { type: 'warning'; warning: VoiceSessionWarning };
 
 export interface AudioPlaybackProgress {
   streamId: string;
@@ -102,6 +105,11 @@ export interface AudioPlaybackProgress {
   cleared?: boolean;
 }
 export interface VoiceSessionError {
-  code: 'VOICE_UNAVAILABLE';
+  code: 'VOICE_UNAVAILABLE' | 'VOICE_CONFIGURATION_ERROR';
+  message: string;
+}
+
+export interface VoiceSessionWarning {
+  code: 'VOICE_OUTPUT_LIMIT';
   message: string;
 }

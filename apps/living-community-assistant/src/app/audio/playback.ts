@@ -48,7 +48,8 @@ export class AudioPlayback {
     this.issue(undefined);
   }
   handle(event: AudioOutputEvent) {
-    if (this.disposed || event.type === 'error') return;
+    if (this.disposed || event.type === 'error' || event.type === 'warning')
+      return;
     try {
       if (event.type === 'start') {
         this.clear();

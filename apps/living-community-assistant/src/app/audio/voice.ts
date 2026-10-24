@@ -12,6 +12,7 @@ export interface VoiceStatus {
     | 'stopping'
     | 'error';
   error?: string;
+  warning?: string;
   chunksSent?: number;
   microphoneName?: string;
 }
@@ -25,6 +26,7 @@ interface ActiveInput {
   sending?: Promise<void>;
 }
 export class VoiceSession {
+  private warning?: string;
   private active?: ActiveInput;
   private disposed = false;
   private playback: AudioPlayback;
@@ -42,6 +44,17 @@ export class VoiceSession {
       (progress) => connection.reportPlayback(progress),
     );
     this.unsubscribe = connection.onAudio((event) => {
+      if (event.type === 'warning') {
+        if (!this.active) return;
+        this.warning = event.warning.message;
+        this.status({
+          state: 'streaming',
+          warning: this.warning,
+          microphoneName: this.active.capture.microphoneName,
+        });
+        return;
+      }
+      if (event.type === 'start') this.warning = undefined;
       if (event.type === 'error') {
         if (this.active) this.fail(this.active, new Error(event.error.message));
         else {
@@ -65,6 +78,7 @@ export class VoiceSession {
   }
   async start() {
     if (this.active || this.disposed) return;
+    this.warning = undefined;
     this.status({ state: 'requesting permission' });
     const input: ActiveInput = {
       id: crypto.randomUUID(),
@@ -158,6 +172,7 @@ export class VoiceSession {
         state: this.stopping ? 'stopping' : 'streaming',
         chunksSent: input.sequence,
         microphoneName: input.capture.microphoneName,
+        ...(this.warning ? { warning: this.warning } : {}),
       });
     }
   }

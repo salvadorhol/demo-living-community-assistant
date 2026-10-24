@@ -1,3 +1,4 @@
+import { ConfigurationError } from './configuration-error.ts';
 import { silentLogger } from './logger.ts';
 import WebSocket from 'ws';
 import { createHash } from 'node:crypto';
@@ -32,7 +33,13 @@ export function withTranscription(
         if (disposed || failed) return;
         failed = true;
         log.warn(
-          { event: 'transcription.degraded', err },
+          {
+            event:
+              err instanceof ConfigurationError
+                ? 'transcription.configuration_failed'
+                : 'transcription.degraded',
+            err,
+          },
           'Live transcription unavailable; voice continues',
         );
         available = false;
@@ -139,19 +146,34 @@ export function withTranscription(
                   event.type === 'error' ||
                   event.type ===
                     'conversation.item.input_audio_transcription.failed'
-                )
-                  fail(
-                    Object.assign(
-                      new Error('Transcription provider rejected a command'),
+                ) {
+                  if (event.error?.type === 'invalid_request_error') {
+                    log.warn(
                       {
-                        code:
-                          typeof event.error?.code === 'string'
-                            ? event.error.code
-                            : undefined,
+                        event: 'transcription.configuration_rejected',
+                        providerCode: event.error?.code,
+                        parameter: event.error?.param,
                       },
-                    ),
-                  );
-                else if (
+                      'OpenAI rejected transcription settings',
+                    );
+                    fail(
+                      new ConfigurationError(
+                        'OpenAI rejected transcription settings. Check the transcription model and audio configuration.',
+                      ),
+                    );
+                  } else
+                    fail(
+                      Object.assign(
+                        new Error('Transcription provider rejected a command'),
+                        {
+                          code:
+                            typeof event.error?.code === 'string'
+                              ? event.error.code
+                              : undefined,
+                        },
+                      ),
+                    );
+                } else if (
                   event.type ===
                     'conversation.item.input_audio_transcription.delta' ||
                   event.type ===

@@ -1,3 +1,4 @@
+import { ConfigurationError, voiceError } from './configuration-error.ts';
 import { silentLogger } from './logger.ts';
 import WebSocket from 'ws';
 import { createHash, randomUUID } from 'node:crypto';
@@ -5,7 +6,11 @@ import type {
   AudioPlaybackProgress,
   TranscriptUpdate,
 } from '@living-community-assistant/types';
-import { AGENT_CONFIG, readOpenAIKey } from './agent-config.ts';
+import {
+  AGENT_CONFIG,
+  readOpenAIKey,
+  readOutputQueueMs,
+} from './agent-config.ts';
 import type { VoiceAgentFactory } from './conversation.ts';
 
 const FORMAT = { encoding: 'pcm16le', sampleRate: 24000, channels: 1 } as const;
@@ -18,7 +23,10 @@ export type ConnectOpenAI = (
 export function createOpenAIAudio(
   key = readOpenAIKey(),
   connect: ConnectOpenAI = (url, options) => new WebSocket(url, options),
+  options: { maxOutputQueueMs?: number } = {},
 ): VoiceAgentFactory {
+  const maxOutputQueueMs = readOutputQueueMs(options.maxOutputQueueMs);
+  const maxOutputQueueBytes = maxOutputQueueMs * 48;
   return {
     kind: 'conversation',
     create({
@@ -40,6 +48,7 @@ export function createOpenAIAudio(
       let listening = false;
       let responseId: string | undefined;
       const cancelled = new Set<string>();
+      const configurationEvents = new Set<string>();
       type Output = {
         id: string;
         itemId: string;
@@ -51,6 +60,10 @@ export function createOpenAIAudio(
         queue: Buffer[];
         queuedBytes: number;
         done: boolean;
+        startedAt: number;
+        lastQueueLog: number;
+        peakQueuedBytes: number;
+        highWaterLogged: boolean;
       };
       let current: Output | undefined;
       let interrupted: Output | undefined;
@@ -62,7 +75,17 @@ export function createOpenAIAudio(
           throw new Error('Voice connection unavailable.');
         if (socket.bufferedAmount > AGENT_CONFIG.maxQueuedBytes)
           throw new Error('Voice input backlog exceeded.');
-        socket.send(JSON.stringify(event), (error) => {
+        let command = event;
+        if ((event as { type?: string }).type === 'session.update') {
+          const eventId = randomUUID();
+          configurationEvents.add(eventId);
+          if (configurationEvents.size > 32)
+            configurationEvents.delete(
+              configurationEvents.values().next().value as string,
+            );
+          command = { ...event, event_id: eventId };
+        }
+        socket.send(JSON.stringify(command), (error) => {
           if (error) fail(error);
         });
       }
@@ -84,17 +107,23 @@ export function createOpenAIAudio(
       function fail(err: unknown = new Error('Voice provider failed')) {
         if (disposed) return;
         log.error(
-          { event: 'voice.provider_failed', err },
+          {
+            event:
+              err instanceof ConfigurationError
+                ? 'voice.configuration_failed'
+                : 'voice.provider_failed',
+            err,
+          },
           'Voice provider failed',
         );
+        rejectSetup?.(
+          err instanceof Error ? err : new Error('Voice provider failed'),
+        );
+        rejectSetup = undefined;
         dispose();
         output({
           type: 'error',
-          error: {
-            code: 'VOICE_UNAVAILABLE',
-            message:
-              'OpenAI voice unavailable. Check server credentials and connectivity, then try Start again.',
-          },
+          error: voiceError(err),
         });
       }
       function truncate() {
@@ -143,6 +172,44 @@ export function createOpenAIAudio(
           }
         }, 250);
       }
+      function queueStats(item: Output) {
+        const elapsedMs = Math.max(1, Date.now() - item.startedAt);
+        return {
+          responseId: item.responseId,
+          queuedBytes: item.queuedBytes,
+          queuedMs: Math.round(item.queuedBytes / 48),
+          peakQueuedMs: Math.round(item.peakQueuedBytes / 48),
+          generatedMs: Math.round(item.bytes / 48),
+          deliveredMs: Math.round((item.bytes - item.queuedBytes) / 48),
+          elapsedMs,
+          generationRate: Math.round((item.bytes / 48 / elapsedMs) * 100) / 100,
+          deliveryRate:
+            Math.round(
+              ((item.bytes - item.queuedBytes) / 48 / elapsedMs) * 100,
+            ) / 100,
+          limitMs: maxOutputQueueMs,
+        };
+      }
+      function cancelOversizedReply(incomingBytes: number) {
+        if (!current) return;
+        log.warn(
+          {
+            event: 'voice.output_limit',
+            ...queueStats(current),
+            incomingBytes,
+          },
+          'Assistant reply exceeded output buffer; cancelling reply, keeping call active',
+        );
+        interrupt();
+        output({
+          type: 'warning',
+          warning: {
+            code: 'VOICE_OUTPUT_LIMIT',
+            message:
+              'The assistant reply was too long and was stopped. You can keep speaking or ask for a shorter answer.',
+          },
+        });
+      }
       function pump() {
         const item = current;
         if (!item || disposed) return;
@@ -163,6 +230,13 @@ export function createOpenAIAudio(
             type: 'chunk',
             chunk: { streamId: item.id, sequence: item.sequence++, data },
           });
+        }
+        if (Date.now() - item.lastQueueLog >= 1000) {
+          log.debug(
+            { event: 'voice.output_queue', ...queueStats(item) },
+            'Voice output queue',
+          );
+          item.lastQueueLog = Date.now();
         }
         if (item.done && !item.queue.length) {
           clearInterval(pumpTimer);
@@ -242,19 +316,47 @@ export function createOpenAIAudio(
                 queue: [],
                 queuedBytes: 0,
                 done: false,
+                startedAt: Date.now(),
+                lastQueueLog: Date.now(),
+                peakQueuedBytes: 0,
+                highWaterLogged: false,
               };
               output({
                 type: 'start',
                 stream: { streamId: current.id, format: FORMAT },
               });
             }
+            // Bound decoded allocation before accepting an unusually large provider event.
+            const estimatedBytes =
+              Math.floor((event.delta.length * 3) / 4) -
+              (event.delta.endsWith('==')
+                ? 2
+                : event.delta.endsWith('=')
+                  ? 1
+                  : 0);
+            if (current.queuedBytes + estimatedBytes > maxOutputQueueBytes) {
+              cancelOversizedReply(estimatedBytes);
+              break;
+            }
             const data = Buffer.from(event.delta, 'base64');
             if (!data.length || data.length % 2)
               throw new Error('Invalid PCM output');
             current.bytes += data.length;
             current.queuedBytes += data.length;
-            if (current.queuedBytes > 480_000)
-              throw new Error('Voice output backlog exceeded');
+            current.peakQueuedBytes = Math.max(
+              current.peakQueuedBytes,
+              current.queuedBytes,
+            );
+            if (
+              !current.highWaterLogged &&
+              current.queuedBytes >= maxOutputQueueBytes * 0.75
+            ) {
+              current.highWaterLogged = true;
+              log.warn(
+                { event: 'voice.output_queue_high', ...queueStats(current) },
+                'Voice output buffer nearing limit',
+              );
+            }
             // Pace delivery at the recorded sample rate, avoiding normal generation bursts
             // overflowing the browser's two-second playback budget.
             for (let offset = 0; offset < data.length; offset += 1920)
@@ -275,6 +377,15 @@ export function createOpenAIAudio(
             break;
           case 'response.done': {
             const response = event.response as { id: string; status: string };
+            if (current?.responseId === response.id)
+              log.debug(
+                {
+                  event: 'voice.response_done',
+                  ...queueStats(current),
+                  status: response.status,
+                },
+                'Voice response generation finished',
+              );
             if (responseId === response.id) responseId = undefined;
             if (response.status === 'failed')
               throw Object.assign(new Error('Voice response failed'), {
@@ -289,9 +400,32 @@ export function createOpenAIAudio(
             break;
           }
           case 'error': {
-            const error = event.error as { code?: string } | undefined;
+            const error = event.error as
+              | {
+                  code?: string;
+                  type?: string;
+                  param?: string;
+                  event_id?: string;
+                }
+              | undefined;
             // Server VAD can cancel before our explicit interruption command arrives.
             if (error?.code === 'response_cancel_not_active') return;
+            if (
+              (error?.event_id && configurationEvents.has(error.event_id)) ||
+              (!ready && error?.type === 'invalid_request_error')
+            ) {
+              log.error(
+                {
+                  event: 'voice.configuration_rejected',
+                  providerCode: error?.code,
+                  parameter: error?.param,
+                },
+                'OpenAI rejected voice session settings',
+              );
+              throw new ConfigurationError(
+                'OpenAI rejected voice session settings. Check the model, voice, and audio configuration.',
+              );
+            }
             throw Object.assign(
               new Error('Voice provider rejected a command'),
               { code: error?.code },
@@ -306,7 +440,9 @@ export function createOpenAIAudio(
           initialization ??= new Promise<void>((resolve, reject) => {
             rejectSetup = reject;
             if (!key) {
-              reject(new Error('OPENAI_API_KEY is required for voice.'));
+              reject(
+                new ConfigurationError('OPENAI_API_KEY is required for voice.'),
+              );
               return;
             }
             socket = connect(
