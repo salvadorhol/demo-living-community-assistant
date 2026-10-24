@@ -6,6 +6,8 @@ describe('server configuration', () => {
       readConfig({ FIREBASE_PROJECT_ID: 'demo-living-community-assistant' }),
     ).toEqual({
       firebaseProjectId: 'demo-living-community-assistant',
+      storageBucket: 'demo-living-community-assistant-call-recordings',
+      maxCallMs: 3600000,
       host: '127.0.0.1',
       port: 3000,
       allowedOrigins: ['http://localhost:4200', 'http://127.0.0.1:4200'],
@@ -22,6 +24,8 @@ describe('server configuration', () => {
       }),
     ).toEqual({
       firebaseProjectId: 'demo-living-community-assistant',
+      storageBucket: 'demo-living-community-assistant-call-recordings',
+      maxCallMs: 3600000,
       host: '0.0.0.0',
       port: 4001,
       allowedOrigins: ['https://example.com', 'http://localhost:4200'],

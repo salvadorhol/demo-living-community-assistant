@@ -2,18 +2,22 @@ import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { readConfig } from './config.ts';
 import { createSocketServer } from './server.ts';
-import { echoAudio } from './audio.ts';
+import { withTranscription } from './transcription.ts';
+import { firebaseCallStore } from './call-store.ts';
+import { createOpenAIAudio } from './openai-audio.ts';
 
 const config = readConfig();
-const firebase = initializeApp({ projectId: config.firebaseProjectId });
-// OPENAI INTEGRATION POINT: replace echoAudio with an AudioSessionFactory.
-// See the commented Realtime adapter outline in audio.ts. Keep OPENAI_API_KEY
-// and the upstream WebSocket on this server; Firebase authenticates the browser.
-const audioProvider = echoAudio;
+const firebase = initializeApp({
+  projectId: config.firebaseProjectId,
+  storageBucket: config.storageBucket,
+});
+const audioProvider = withTranscription(createOpenAIAudio());
 const server = createSocketServer(
   config,
   (token) => getAuth(firebase).verifyIdToken(token),
   audioProvider,
+  firebaseCallStore(firebase, config.storageBucket),
+  config.maxCallMs,
 );
 server.httpServer.on('error', (error) => {
   console.error('Socket server failed:', error.message);

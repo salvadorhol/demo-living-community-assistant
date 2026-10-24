@@ -3,7 +3,7 @@ import { nxE2EPreset } from '@nx/playwright/preset';
 import { getReadyUrl, workspaceRoot } from '@nx/devkit';
 
 // getReadyUrl moves the address to the port the server task reported.
-const webServerAddress = getReadyUrl('http://localhost:4200');
+const webServerAddress = getReadyUrl('http://localhost:4201');
 
 // For CI, you may want to set BASE_URL to the deployed application.
 const baseURL = process.env['BASE_URL'] || webServerAddress;
@@ -32,13 +32,39 @@ export default defineConfig({
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'npx nx run living-community-assistant:local-emulator',
-    timeout: 180_000,
-    url: webServerAddress,
-    reuseExistingServer: true,
-    cwd: workspaceRoot,
-  },
+  webServer: [
+    {
+      command:
+        'npx nx build functions && node tools/start-emulators.mjs --ephemeral --test',
+      timeout: 180_000,
+      url: 'http://127.0.0.1:5301/demo-living-community-assistant/us-central1/health',
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 30000 },
+      cwd: workspaceRoot,
+    },
+    {
+      command: 'node apps/socket-server/src/voice-fixture.ts',
+      env: {
+        FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399',
+        FIRESTORE_EMULATOR_HOST: '127.0.0.1:8380',
+        FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9398',
+      },
+      timeout: 30_000,
+      url: 'http://127.0.0.1:3001/health',
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 30000 },
+      cwd: workspaceRoot,
+    },
+    {
+      command:
+        'npx vite --config apps/living-community-assistant-e2e/voice-browser.config.mts',
+      timeout: 30_000,
+      url: webServerAddress,
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 30000 },
+      cwd: workspaceRoot,
+    },
+  ],
   projects: [
     {
       name: 'chromium',

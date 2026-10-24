@@ -20,7 +20,7 @@
       "dependsOn": ["build"],
       "options": {
         "commands": [
-          "firebase emulators:start --only auth,firestore,functions --project demo-living-community-assistant",
+          "node tools/start-emulators.mjs",
           "npx nx watch --projects=functions --includeDependencies -- npx nx build functions"
         ],
         "parallel": true
@@ -90,6 +90,13 @@
       "dependsOn": ["build"],
       "options": {
         "command": "node tools/smoke-emulators.mjs"
+      }
+    },
+    "deploy-rules": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node tools/deploy.mjs rules"
       }
     }
   }

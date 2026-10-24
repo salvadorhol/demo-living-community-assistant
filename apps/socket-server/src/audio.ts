@@ -6,7 +6,7 @@ import type {
   ServerToClientEvents,
 } from '@living-community-assistant/types';
 
-/** A future provider adapter owns its upstream session here. No audio is retained by default. */
+/** Per-stream adapter retained for echo and fixture providers. */
 export interface AudioSession {
   start(): void | Promise<void>;
   write(data: Uint8Array): void | Promise<void>;
@@ -18,71 +18,6 @@ export type AudioSessionFactory = (context: {
   streamId: string;
   output: (event: AudioOutputEvent) => void;
 }) => AudioSession;
-/*
- * FUTURE OPENAI ADAPTER — outline only; echoAudio below remains active.
- * Implement this as openai-audio.ts, then select it in main.ts. One factory
- * instance belongs to one authenticated microphone stream; never share an
- * upstream connection between clients. `uid` is the verified Firebase identity.
- *
- * This outline targets the Realtime API conversation protocol, not GPT-Live's
- * different session.* events. A transcription-only session produces text,
- * not spoken responses; add a separate transcript contract if that is needed.
- * Official OpenAI documentation:
- * https://developers.openai.com/api/docs/guides/voice-websockets
- * https://developers.openai.com/api/docs/guides/realtime-conversations
- * https://developers.openai.com/api/docs/guides/realtime-transcription
- *
- * export const openaiAudio: AudioSessionFactory = ({ uid, streamId, output }) => {
- *   // Own the upstream socket, output sequence, timers, and disposed flag here.
- *   return {
- *     async start() {
- *       // Connect to wss://api.openai.com/v1/realtime?model=<configured model>.
- *       // Use a server-side WebSocket client supporting Authorization headers;
- *       // read OPENAI_API_KEY on the server, never from frontend environment files.
- *       // Register message/error/close handlers BEFORE waiting for the connection.
- *       // Send session.update: type 'realtime', output_modalities ['audio'],
- *       // audio.input/output.format { type: 'audio/pcm', rate: 24000 }.
- *       // For this Start/Stop UI, set audio.input.turn_detection to null.
- *       // Resolve only after session.updated; bound setup below our 2s ack limit.
- *     },
- *     async write(data) {
- *       // `data` is already mono PCM16LE at 24 kHz. No WAV/Opus decoding needed.
- *       // Send JSON through the upstream socket, NOT the browser Socket.IO socket:
- *       // { type: 'input_audio_buffer.append',
- *       //   audio: Buffer.from(data).toString('base64') }
- *       // Resolve when locally sent; OpenAI does not acknowledge each append.
- *       // Bound upstream queued bytes and reject on send failure/backpressure.
- *     },
- *     async stop() {
- *       // With VAD disabled: send input_audio_buffer.commit, then response.create.
- *       // Skip an empty/too-short input buffer according to the API requirements.
- *       // Finish sending promptly; don't await the model response in this ack.
- *       // KEEP receiving output after Stop; closing here would truncate speech.
- *     },
- *     dispose() {
- *       // Mark disposed, cancel pending work, remove handlers/timers, and close
- *       // the upstream socket synchronously. Do not reconnect/replay old audio.
- *     },
- *   };
- * };
- *
- * In the upstream message handler:
- * - On the first response.output_audio.delta for an output item, call
- *   output({ type: 'start', stream: { streamId: outputId, format: PCM_FORMAT } });
- *   PCM_FORMAT is { encoding: 'pcm16le', sampleRate: 24000, channels: 1 }.
- * - Decode event.delta with Buffer.from(event.delta, 'base64'). Split into
- *   even-length chunks <= 4800 bytes; publish output({ type: 'chunk', chunk:
- *   { streamId: outputId, sequence: nextSequence++, data: bytes } }).
- *   Use a distinct outputId per audio item and reset its sequence to zero.
- * - On response.output_audio.done, publish output({ type: 'end', streamId:
- *   outputId }); on interruption/failure, publish 'clear' instead.
- * - Handle OpenAI error events and unexpected closes explicitly; the current
- *   callback only carries audio. Add a typed async error event before enabling
- *   a live provider, so failures after start() reach the UI too.
- * - Ignore late messages after disposal. attachAudio scopes callbacks to this
- *   client and clears scheduled playback on cancellation/replacement.
- */
-
 /** Stream each validated chunk straight back to its originating client. */
 export const echoAudio: AudioSessionFactory = ({ streamId, output }) => {
   let sequence = 0;

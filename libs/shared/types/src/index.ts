@@ -7,7 +7,22 @@ export interface VoiceRoomSession {
   roomId: string;
 }
 
+export interface CallStatus {
+  callId: string;
+  state: 'active' | 'paused' | 'saving' | 'saved' | 'failed';
+  transcription?: 'available' | 'degraded';
+  message?: string;
+}
+
 export interface ClientToServerEvents {
+  'call:end': (
+    value: { callId: string },
+    ack: (result: AudioAck) => void,
+  ) => void;
+  'call:retry': (
+    value: { callId: string },
+    ack: (result: AudioAck) => void,
+  ) => void;
   'audio:input:start': (
     stream: AudioStream,
     ack: (result: AudioAck) => void,
@@ -20,10 +35,27 @@ export interface ClientToServerEvents {
     stream: AudioStreamEnd & { cancel?: boolean },
     ack: (result: AudioAck) => void,
   ) => void;
+  'audio:playback:progress': (progress: AudioPlaybackProgress) => void;
   'health:check': (acknowledge: (response: HealthResponse) => void) => void;
 }
 
+/** Full text snapshot for one utterance; IDs remain stable across partial updates. */
+export interface TranscriptUpdate {
+  callId?: string;
+  order?: number;
+  revision?: number;
+  interrupted?: boolean;
+  incomplete?: boolean;
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  isFinal: boolean;
+}
+
 export interface ServerToClientEvents {
+  'call:status': (status: CallStatus) => void;
+  'transcript:update': (update: TranscriptUpdate) => void;
+  'voice:session:error': (error: VoiceSessionError) => void;
   'voice:session:ready': (session: VoiceRoomSession) => void;
   'audio:output:start': (stream: AudioStream) => void;
   'audio:output:chunk': (chunk: AudioChunk) => void;
@@ -61,4 +93,15 @@ export type AudioOutputEvent =
   | { type: 'start'; stream: AudioStream }
   | { type: 'chunk'; chunk: AudioChunk }
   | { type: 'end'; streamId: string }
-  | { type: 'clear'; streamId: string };
+  | { type: 'clear'; streamId: string }
+  | { type: 'error'; error: VoiceSessionError };
+
+export interface AudioPlaybackProgress {
+  streamId: string;
+  playedMs: number;
+  cleared?: boolean;
+}
+export interface VoiceSessionError {
+  code: 'VOICE_UNAVAILABLE';
+  message: string;
+}

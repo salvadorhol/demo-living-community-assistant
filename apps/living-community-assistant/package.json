@@ -20,12 +20,18 @@
         "continuous": true,
         "options": {
           "commands": [
-            "npx nx run functions:serve",
-            "npx nx run socket-server:local-emulator",
-            "npx vite --config apps/living-community-assistant/vite.config.mts --mode local-emulator"
+            "node tools/dev.mjs"
           ],
-          "parallel": true
-        }
+          "parallel": false
+        },
+        "dependsOn": [
+          {
+            "projects": [
+              "functions"
+            ],
+            "target": "build"
+          }
+        ]
       },
       "deploy": {
         "executor": "nx:run-commands",

@@ -186,6 +186,14 @@ export class VoiceSession {
       this.stopping = false;
     }
   }
+  async end() {
+    // Stop capture/playback before asking the backend to finalize.
+    await this.stop();
+    await this.connection.endCall();
+  }
+  async retrySave() {
+    await this.connection.retrySave();
+  }
   private fail(input: ActiveInput, error: unknown) {
     if (this.active !== input) return;
     this.abort();

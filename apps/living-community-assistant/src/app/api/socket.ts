@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import type {
   AudioAck,
+  CallStatus,
   AudioPlaybackProgress,
   AudioChunk,
   AudioStream,
@@ -23,6 +24,8 @@ export interface ConnectionStatus {
 export interface SocketConnection {
   (): void;
   startAudio(stream: AudioStream): Promise<void>;
+  endCall(): Promise<void>;
+  retrySave(): Promise<void>;
   sendAudio(chunk: AudioChunk): Promise<void>;
   stopAudio(streamId: string, cancel?: boolean): Promise<void>;
   reportPlayback(progress: AudioPlaybackProgress): void;
@@ -32,6 +35,7 @@ export interface SocketConnection {
 
 export function startSocket(
   onStatus: (status: ConnectionStatus) => void,
+  onCall: (status: CallStatus) => void = () => undefined,
 ): SocketConnection {
   const transcriptListeners = new Set<(update: TranscriptUpdate) => void>();
   const audioListeners = new Set<(event: AudioOutputEvent) => void>();
@@ -41,6 +45,7 @@ export function startSocket(
   let refreshed = false;
   let forceRefresh = false;
   let session: VoiceRoomSession | undefined;
+  let callId: string | undefined;
   const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(
     environment.socketUrl,
     {
@@ -63,8 +68,15 @@ export function startSocket(
       },
     },
   );
+  socket.on('call:status', (value) => {
+    if (disposed || !socket.connected || !session) return;
+    if (value.state === 'active' && callId !== value.callId)
+      callId = value.callId;
+    if (callId === value.callId) onCall(value);
+  });
   socket.on('transcript:update', (update) => {
     if (disposed || !socket.connected || !session) return;
+    if (update.callId && update.callId !== callId) return;
     transcriptListeners.forEach((listener) => listener(update));
   });
   socket.on('voice:session:error', (error) =>
@@ -94,6 +106,7 @@ export function startSocket(
   });
   socket.on('disconnect', () => {
     session = undefined;
+    callId = undefined;
     onStatus({ state: 'disconnected' });
   });
   socket.io.on('reconnect_attempt', () => onStatus({ state: 'connecting' }));
@@ -144,6 +157,18 @@ export function startSocket(
       throw new Error(result?.message ?? 'Audio request failed.');
   }
   return Object.assign(close, {
+    async endCall() {
+      connected();
+      if (!callId) throw new Error('No active call.');
+      accepted(await socket.timeout(5000).emitWithAck('call:end', { callId }));
+    },
+    async retrySave() {
+      connected();
+      if (!callId) throw new Error('No failed call.');
+      accepted(
+        await socket.timeout(5000).emitWithAck('call:retry', { callId }),
+      );
+    },
     async startAudio(stream: AudioStream) {
       connected();
       accepted(

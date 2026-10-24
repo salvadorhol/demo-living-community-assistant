@@ -1,11 +1,15 @@
 export interface ServerConfig {
   firebaseProjectId: string;
+  storageBucket?: string;
+  maxCallMs?: number;
   host: string;
   port: number;
   allowedOrigins: string[];
 }
 
-export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
+export function readConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): ServerConfig & { storageBucket: string; maxCallMs: number } {
   const rawPort = env.PORT ?? '3000';
   const port = Number(rawPort);
   if (
@@ -41,5 +45,24 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   }
   const firebaseProjectId = env.FIREBASE_PROJECT_ID?.trim();
   if (!firebaseProjectId) throw new Error('FIREBASE_PROJECT_ID is required.');
-  return { host, port, allowedOrigins, firebaseProjectId };
+  const storageBucket =
+    env.FIREBASE_STORAGE_BUCKET?.trim() ||
+    `${firebaseProjectId}-call-recordings`;
+  if (!/^[a-z0-9][a-z0-9.-]+[a-z0-9]$/.test(storageBucket))
+    throw new Error('Invalid FIREBASE_STORAGE_BUCKET.');
+  const maxCallMs = Number(env.MAX_CALL_MS ?? 3600000);
+  if (
+    !Number.isSafeInteger(maxCallMs) ||
+    maxCallMs < 1000 ||
+    maxCallMs > 3600000
+  )
+    throw new Error('MAX_CALL_MS must be between 1000 and 3600000.');
+  return {
+    host,
+    port,
+    allowedOrigins,
+    firebaseProjectId,
+    storageBucket,
+    maxCallMs,
+  };
 }

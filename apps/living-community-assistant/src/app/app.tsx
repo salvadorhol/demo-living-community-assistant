@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { TranscriptUpdate } from '@living-community-assistant/types';
+import type {
+  TranscriptUpdate,
+  CallStatus,
+} from '@living-community-assistant/types';
 import { startSocket, type ConnectionStatus } from './api/socket';
 import { VoiceSession, type VoiceStatus } from './audio/voice';
 import { microphoneSupported } from './audio/capture';
@@ -26,6 +29,9 @@ export function App() {
   const [socketStatus, setSocketStatus] = useState<ConnectionStatus>({
     state: 'connecting',
   });
+  const [call, setCall] = useState<CallStatus>();
+  const [callError, setCallError] = useState<string>();
+  const callId = useRef<string | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
   const voice = useRef<VoiceSession | undefined>(undefined);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>({
@@ -39,18 +45,40 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     setTranscripts([]);
-    const connection = startSocket((status) => {
-      if (disposed) return;
-      setSocketStatus(status);
-      if (status.state !== 'connected') voice.current?.disconnect();
-      if (status.state === 'disconnected') setTranscripts([]);
-    });
+    const connection = startSocket(
+      (status) => {
+        if (disposed) return;
+        setSocketStatus(status);
+        if (status.state !== 'connected') voice.current?.disconnect();
+        if (status.state === 'disconnected') {
+          setCall(undefined);
+          callId.current = undefined;
+        }
+      },
+      (status) => {
+        if (disposed) return;
+        if (status.state === 'active' && callId.current !== status.callId) {
+          callId.current = status.callId;
+          setTranscripts([]);
+        }
+        if (callId.current === status.callId) setCall(status);
+      },
+    );
     const unsubscribe = connection.onTranscript((update) => {
       if (disposed) return;
       setTranscripts((entries) => {
         const index = entries.findIndex((entry) => entry.id === update.id);
-        if (index === -1) return [...entries, update];
-        if (entries[index].isFinal) return entries;
+        if (index === -1)
+          return [...entries, update].sort(
+            (a, b) => (a.order ?? 0) - (b.order ?? 0),
+          );
+        if (
+          update.revision !== undefined &&
+          (entries[index].revision ?? 0) >= update.revision
+        )
+          return entries;
+        if (entries[index].isFinal && update.revision === undefined)
+          return entries;
         return entries.map((entry, i) => (i === index ? update : entry));
       });
     });
@@ -93,8 +121,10 @@ export function App() {
     voiceStatus.state === 'stopping'
       ? 'Stopping…'
       : active
-        ? 'Stop session'
-        : 'Start session';
+        ? 'Pause'
+        : call?.state === 'paused'
+          ? 'Resume'
+          : 'Start session';
 
   return (
     <main className={styles['page']}>
@@ -129,6 +159,8 @@ export function App() {
               className={styles['primary']}
               disabled={
                 voiceStatus.state === 'stopping' ||
+                call?.state === 'saving' ||
+                call?.state === 'failed' ||
                 (!active &&
                   (!microphoneSupported() ||
                     socketStatus.state !== 'connected'))
@@ -142,6 +174,22 @@ export function App() {
               </span>
               {buttonLabel}
             </button>
+            {call && ['active', 'paused'].includes(call.state) && (
+              <button
+                className={styles['textButton']}
+                disabled={pending}
+                onClick={() => {
+                  setCallError(undefined);
+                  void voice.current
+                    ?.end()
+                    .catch(() =>
+                      setCallError('Could not end call. Please retry.'),
+                    );
+                }}
+              >
+                End call
+              </button>
+            )}
             <span className={styles['microphone']} title={microphoneName}>
               <MicrophoneIcon />
               <span>{microphoneName}</span>
@@ -168,6 +216,32 @@ export function App() {
               HTTPS or localhost.
             </p>
           )}
+          {call && (
+            <p role="status" aria-label="Call status">
+              {call.state === 'saving'
+                ? 'Saving call…'
+                : call.state === 'saved'
+                  ? 'Call saved'
+                  : call.state === 'failed'
+                    ? 'Save failed'
+                    : call.state === 'paused'
+                      ? 'Call paused'
+                      : 'Call active'}
+            </p>
+          )}
+          {call?.message && <p role="alert">{call.message}</p>}
+          {call?.state === 'failed' && (
+            <button
+              onClick={() => {
+                void voice.current
+                  ?.retrySave()
+                  .catch(() => setCallError('Could not retry save.'));
+              }}
+            >
+              Retry save
+            </button>
+          )}
+          {callError && <p role="alert">{callError}</p>}
           {socketStatus.error && <p role="alert">{socketStatus.error}</p>}
           {voiceStatus.error && <p role="alert">{voiceStatus.error}</p>}
           {playbackIssue && (
@@ -213,6 +287,8 @@ export function App() {
                   <h3>{entry.role === 'user' ? 'You' : 'Assistant'}</h3>
                   <p>
                     {entry.text}
+                    {entry.interrupted && <span> (interrupted)</span>}
+                    {entry.incomplete && <span> (incomplete)</span>}
                     {!entry.isFinal && (
                       <span
                         className={styles['cursor']}

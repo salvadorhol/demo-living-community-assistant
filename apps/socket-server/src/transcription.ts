@@ -1,0 +1,209 @@
+import WebSocket from 'ws';
+import { createHash } from 'node:crypto';
+import { AGENT_CONFIG, readOpenAIKey } from './agent-config.ts';
+import type { VoiceAgentFactory } from './conversation.ts';
+import type { ConnectOpenAI } from './openai-audio.ts';
+
+/** Separate live ASR connection: it cannot generate assistant responses. */
+export function withTranscription(
+  voice: VoiceAgentFactory,
+  key = readOpenAIKey(),
+  connect: ConnectOpenAI = (url, options) => new WebSocket(url, options),
+): VoiceAgentFactory {
+  return {
+    kind: 'conversation',
+    create(context) {
+      let socket: WebSocket | undefined;
+      let disposed = false;
+      let available = false;
+      let pendingAudio = false;
+      let bytes = 0;
+      let outstanding = 0;
+      let settle: (() => void) | undefined;
+      let rejectSetup: ((error: Error) => void) | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const text = new Map<string, string>();
+      const fail = () => {
+        if (disposed) return;
+        available = false;
+        context.degraded?.();
+        rejectSetup?.(new Error('Transcription unavailable.'));
+        rejectSetup = undefined;
+        clearTimeout(timer);
+        socket?.terminate();
+        settle?.();
+      };
+      function send(event: object) {
+        if (!available || !socket || socket.readyState !== WebSocket.OPEN)
+          return;
+        if (socket.bufferedAmount > AGENT_CONFIG.maxQueuedBytes) {
+          fail();
+          return;
+        }
+        socket.send(JSON.stringify(event), (error) => {
+          if (error) fail();
+        });
+      }
+      function commit() {
+        if (!pendingAudio || !available) return;
+        // Very short buffers cannot be committed by the provider.
+        if (bytes < 4800)
+          send({
+            type: 'input_audio_buffer.append',
+            audio: Buffer.alloc(4800 - bytes).toString('base64'),
+          });
+        outstanding++;
+        send({ type: 'input_audio_buffer.commit' });
+        pendingAudio = false;
+        bytes = 0;
+      }
+      const agent = voice.create({ ...context, turnEnded: commit });
+      return {
+        async initialize() {
+          await agent.initialize();
+          if (socket || disposed) return;
+          await new Promise<void>((resolve, reject) => {
+            rejectSetup = reject;
+            socket = connect(
+              'wss://api.openai.com/v1/realtime?intent=transcription',
+              {
+                headers: {
+                  Authorization: `Bearer ${key}`,
+                  'OpenAI-Safety-Identifier': createHash('sha256')
+                    .update(context.uid)
+                    .digest('hex'),
+                },
+              },
+            );
+            timer = setTimeout(fail, AGENT_CONFIG.setupTimeoutMs);
+            socket.on('error', fail);
+            socket.on('close', () => {
+              if (available) fail();
+            });
+            socket.on('open', () => {
+              if (disposed) return;
+              available = true;
+              send({
+                type: 'session.update',
+                session: {
+                  type: 'transcription',
+                  audio: {
+                    input: {
+                      format: { type: 'audio/pcm', rate: 24000 },
+                      transcription: {
+                        model: AGENT_CONFIG.transcriptionModel,
+                        delay: 'low',
+                      },
+                      turn_detection: null,
+                    },
+                  },
+                },
+              });
+            });
+            socket.on('message', (data) => {
+              if (disposed || !available) return;
+              try {
+                const event = JSON.parse(data.toString());
+                if (
+                  event.type === 'session.created' &&
+                  typeof event.session?.id === 'string'
+                )
+                  context.metadata?.({
+                    transcriptionSessionId: event.session.id,
+                  });
+                if (event.type === 'session.updated') {
+                  clearTimeout(timer);
+                  rejectSetup = undefined;
+                  resolve();
+                } else if (
+                  event.type === 'error' ||
+                  event.type ===
+                    'conversation.item.input_audio_transcription.failed'
+                )
+                  fail();
+                else if (
+                  event.type ===
+                    'conversation.item.input_audio_transcription.delta' ||
+                  event.type ===
+                    'conversation.item.input_audio_transcription.completed'
+                ) {
+                  if (
+                    typeof event.item_id !== 'string' ||
+                    !Number.isSafeInteger(event.content_index)
+                  )
+                    return;
+                  const id = `user-${event.item_id}-${event.content_index}`;
+                  const final = event.type.endsWith('.completed');
+                  const value = final
+                    ? event.transcript
+                    : (text.get(id) ?? '') + event.delta;
+                  if (typeof value !== 'string' || value.length > 100_000) {
+                    fail();
+                    return;
+                  }
+                  text.set(id, value);
+                  context.transcript?.({
+                    id,
+                    role: 'user',
+                    text: value,
+                    isFinal: final,
+                  });
+                  if (final) {
+                    text.delete(id);
+                    outstanding = Math.max(0, outstanding - 1);
+                    if (!outstanding) settle?.();
+                  }
+                }
+              } catch {
+                fail();
+              }
+            });
+          }).catch(() => context.degraded?.());
+        },
+        beginInput() {
+          agent.beginInput();
+        },
+        write(data) {
+          agent.write(data);
+          pendingAudio = true;
+          bytes += data.length;
+          send({
+            type: 'input_audio_buffer.append',
+            audio: Buffer.from(data).toString('base64'),
+          });
+        },
+        pause() {
+          commit();
+          agent.pause();
+        },
+        progress(value) {
+          agent.progress(value);
+        },
+        async finish() {
+          commit();
+          if (available && outstanding)
+            await new Promise<void>((resolve) => {
+              const timeout = setTimeout(() => {
+                context.degraded?.();
+                resolve();
+              }, 1500);
+              settle = () => {
+                clearTimeout(timeout);
+                resolve();
+              };
+            });
+        },
+        dispose() {
+          disposed = true;
+          clearTimeout(timer);
+          rejectSetup?.(new Error('Transcription closed.'));
+          rejectSetup = undefined;
+          settle?.();
+          available = false;
+          socket?.terminate();
+          agent.dispose();
+        },
+      };
+    },
+  };
+}

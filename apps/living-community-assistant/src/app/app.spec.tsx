@@ -84,7 +84,7 @@ it('starts and stops a session and keeps the actual microphone label', () => {
     }),
   );
   expect(screen.getByText('Studio microphone')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: /Stop session/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Pause/ }));
   expect(mocks.stop).toHaveBeenCalledOnce();
   act(() => mocks.voiceStatus({ state: 'stopping' }));
   expect(
@@ -107,7 +107,7 @@ it('shows permission failures and unsupported microphone guidance', () => {
   expect(screen.getByText('Permission denied')).toBeTruthy();
 });
 
-it('replaces partial transcripts, preserves order and finals, and resets on disconnect', () => {
+it('replaces partial transcripts, preserves order and finals, and preserves ended text on disconnect', () => {
   const view = render(<App />);
   const update = (value: TranscriptUpdate) =>
     act(() => mocks.transcript(value));
@@ -123,7 +123,7 @@ it('replaces partial transcripts, preserves order and finals, and resets on disc
   act(() => mocks.voiceStatus({ state: 'idle' }));
   expect(screen.getByText('Hello')).toBeTruthy();
   act(() => mocks.status({ state: 'disconnected' }));
-  expect(screen.queryByRole('article')).toBeNull();
+  expect(screen.getAllByRole('article')).toHaveLength(2);
   const stale = mocks.transcript;
   fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
   act(() => stale({ id: 'late', role: 'user', text: 'stale', isFinal: true }));

@@ -10,6 +10,8 @@ import type {
   HealthResponse,
 } from '@living-community-assistant/types';
 import { attachAudio, echoAudio, type AudioSessionFactory } from './audio.ts';
+import type { CallStore } from './call-store.ts';
+import { attachConversation, type VoiceAgentFactory } from './conversation.ts';
 import type { ServerConfig } from './config.ts';
 
 function health(): HealthResponse {
@@ -19,7 +21,9 @@ function health(): HealthResponse {
 export function createSocketServer(
   config: ServerConfig,
   verifyToken: (token: string) => Promise<DecodedIdToken>,
-  audioFactory: AudioSessionFactory = echoAudio,
+  audioFactory: AudioSessionFactory | VoiceAgentFactory = echoAudio,
+  callStore?: CallStore,
+  maxCallMs?: number,
 ) {
   const app = express();
   app.disable('x-powered-by');
@@ -31,7 +35,7 @@ export function createSocketServer(
     ClientToServerEvents,
     ServerToClientEvents,
     Record<string, never>,
-    { uid: string }
+    { uid: string; authProvider?: string; authTime?: number }
   >(httpServer, {
     cors: { origin: config.allowedOrigins },
     // CORS alone does not restrict WebSocket upgrades.
@@ -56,6 +60,9 @@ export function createSocketServer(
     try {
       const decoded = await verifyToken(token);
       socket.data.uid = decoded.uid;
+      socket.data.authProvider =
+        decoded.firebase?.sign_in_provider ?? 'unknown';
+      socket.data.authTime = decoded.auth_time;
       next();
     } catch {
       next(
@@ -65,6 +72,7 @@ export function createSocketServer(
       );
     }
   });
+  const finishers = new Set<() => Promise<void>>();
   const rooms = new Map<string, { roomId: string; members: Set<string> }>();
   io.on('connection', async (socket) => {
     const uid = socket.data.uid;
@@ -80,7 +88,26 @@ export function createSocketServer(
       if (!session.members.size && rooms.get(uid) === session)
         rooms.delete(uid);
     });
-    attachAudio(socket, audioFactory);
+    if (typeof audioFactory === 'function') attachAudio(socket, audioFactory);
+    else {
+      const finish = attachConversation(
+        socket,
+        audioFactory,
+        callStore,
+        maxCallMs,
+        session.roomId,
+        {
+          authProvider: socket.data.authProvider ?? 'unknown',
+          ...(socket.data.authTime === undefined
+            ? {}
+            : { authTime: socket.data.authTime }),
+        },
+      );
+      finishers.add(finish);
+      socket.once('disconnect', () => {
+        void finish().finally(() => finishers.delete(finish));
+      });
+    }
     socket.emit('health:status', health());
     socket.on('health:check', (acknowledge) => {
       if (typeof acknowledge === 'function') acknowledge(health());
@@ -100,17 +127,20 @@ export function createSocketServer(
     io,
     httpServer,
     close: () =>
-      (closing ??= new Promise<void>((resolve, reject) => {
-        io.close((error) => {
-          if (
-            error &&
-            (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
-          )
-            reject(error);
-          else resolve();
+      (closing ??= (async () => {
+        await Promise.all([...finishers].map((finish) => finish()));
+        await new Promise<void>((resolve, reject) => {
+          io.close((error) => {
+            if (
+              error &&
+              (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+            )
+              reject(error);
+            else resolve();
+          });
+          // Bound shutdown even when an HTTP client keeps its connection alive.
+          httpServer.closeAllConnections();
         });
-        // Bound shutdown even when an HTTP client keeps its connection alive.
-        httpServer.closeAllConnections();
-      })),
+      })()),
   };
 }

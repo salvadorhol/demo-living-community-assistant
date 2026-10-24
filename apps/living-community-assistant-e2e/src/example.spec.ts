@@ -3,7 +3,11 @@ import { test, expect, type Page } from '@playwright/test';
 async function storedUser(page: Page) {
   return page.evaluate(
     () =>
-      new Promise<{ uid: string; isAnonymous: boolean }>((resolve, reject) => {
+      new Promise<{
+        uid: string;
+        isAnonymous: boolean;
+        stsTokenManager: { accessToken: string };
+      }>((resolve, reject) => {
         const request = indexedDB.open('firebaseLocalStorageDb');
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
@@ -36,21 +40,15 @@ test('shows the workspace and connects to the backend', async ({ page }) => {
   );
   await expect(
     page.getByRole('status', { name: 'Socket connection status' }),
-  ).toHaveText('Socket connected', { timeout: 60_000 });
+  ).toHaveText('Socket on', { timeout: 60_000 });
   const user = await storedUser(page);
   expect(user?.isAnonymous).toBe(true);
   expect(user?.uid).toBeTruthy();
   await page.reload();
   await expect(
     page.getByRole('status', { name: 'Socket connection status' }),
-  ).toHaveText('Socket connected', { timeout: 60_000 });
+  ).toHaveText('Socket on', { timeout: 60_000 });
   expect((await storedUser(page))?.uid).toBe(user.uid);
-  await page.getByRole('button', { name: 'Check backend' }).click();
-  await expect(
-    page.getByRole('status', { name: 'Backend health status' }),
-  ).toContainText('Backend ok', {
-    timeout: 60_000,
-  });
 });
 
 test('streams microphone audio to the authenticated server and releases capture on Stop', async ({
@@ -96,13 +94,12 @@ test('streams microphone audio to the authenticated server and releases capture 
   await page.goto('/');
   await expect(
     page.getByRole('status', { name: 'Socket connection status' }),
-  ).toHaveText('Socket connected');
-  await page.getByRole('button', { name: 'Start microphone' }).click();
+  ).toHaveText('Socket on');
+  await page.getByRole('button', { name: /Start session|Resume/ }).click();
   const status = page.getByRole('status', { name: 'Microphone status' });
-  await expect(status).toContainText(
-    /Microphone streaming · Audio received by server/,
-    { timeout: 15000 },
-  );
+  await expect(status).toContainText(/Listening · Speak to the assistant/, {
+    timeout: 15000,
+  });
   await expect
     .poll(() =>
       page.evaluate(
@@ -112,8 +109,14 @@ test('streams microphone audio to the authenticated server and releases capture 
       ),
     )
     .toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Stop microphone' }).click();
-  await expect(status).toContainText('Microphone idle');
+  await expect(
+    page.getByText('Hello from the resident.').first(),
+  ).toBeVisible();
+  await expect(page.getByText('Hello! How can I help?').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(status).toContainText(
+    'Start a session to talk with the assistant.',
+  );
   expect(
     await page.evaluate(() =>
       (
@@ -123,13 +126,80 @@ test('streams microphone audio to the authenticated server and releases capture 
       ).microphoneTracks.every((track) => track.readyState === 'ended'),
     ),
   ).toBe(true);
-  await page.getByRole('button', { name: 'Start microphone' }).click();
+  const previousPlaybackStarts = await page.evaluate(
+    () =>
+      (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
+        .audioPlaybackStarts ?? 0,
+  );
+  await page.getByRole('button', { name: /Start session|Resume/ }).click();
+  await expect(status).toContainText(/Listening · Speak to the assistant/, {
+    timeout: 15000,
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
+            .audioPlaybackStarts ?? 0,
+      ),
+    )
+    .toBeGreaterThan(previousPlaybackStarts);
+  await page.getByRole('button', { name: 'Pause' }).click();
   await expect(status).toContainText(
-    /Microphone streaming · Audio received by server/,
+    'Start a session to talk with the assistant.',
+  );
+  await page.getByRole('button', { name: 'End call' }).click();
+  await expect(page.getByRole('status', { name: 'Call status' })).toHaveText(
+    'Call saved',
     { timeout: 15000 },
   );
-  await page.getByRole('button', { name: 'Stop microphone' }).click();
-  await expect(status).toContainText('Microphone idle');
+  const user = await storedUser(page);
+  const headers = {
+    Authorization: `Bearer ${user.stsTokenManager.accessToken}`,
+  };
+  const root =
+    'http://127.0.0.1:8380/v1/projects/demo-living-community-assistant/databases/(default)/documents';
+  const calls = await fetch(`${root}/sessions/${user.uid}/calls`, {
+    headers,
+  }).then((response) => response.json());
+  expect(calls.documents).toHaveLength(1);
+  const saved = calls.documents[0];
+  expect(saved.fields.recordingStatus.stringValue).toBe('saved');
+  expect(saved.fields.uid.stringValue).toBe(user.uid);
+  const recording = saved.fields.recording.mapValue.fields;
+  const audio = await fetch(
+    `http://127.0.0.1:9398/v0/b/${recording.bucket.stringValue}/o/${encodeURIComponent(recording.objectPath.stringValue)}?alt=media`,
+    { headers },
+  );
+  expect(audio.ok).toBe(true);
+  const wav = Buffer.from(await audio.arrayBuffer());
+  expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
+  expect(wav.length).toBeGreaterThan(44);
+  const transcript = await fetch(
+    `http://127.0.0.1:8380/v1/${saved.name}/transcripts`,
+    { headers },
+  ).then((response) => response.json());
+  expect(
+    transcript.documents.some(
+      (entry: { fields: { role: { stringValue: string } } }) =>
+        entry.fields.role.stringValue === 'user',
+    ),
+  ).toBe(true);
+  expect(
+    transcript.documents.some(
+      (entry: { fields: { role: { stringValue: string } } }) =>
+        entry.fields.role.stringValue === 'assistant',
+    ),
+  ).toBe(true);
+  await page.getByRole('button', { name: 'Start session' }).click();
+  await expect(page.getByRole('status', { name: 'Call status' })).toHaveText(
+    'Call active',
+  );
+  await expect(page.getByText('Hello from the resident.')).toHaveCount(1);
+  await page.getByRole('button', { name: 'End call' }).click();
+  await expect(page.getByRole('status', { name: 'Call status' })).toHaveText(
+    'Call saved',
+  );
   expect(externalRequests).toEqual([]);
 });
 
@@ -141,7 +211,7 @@ test('explains unsupported microphone capability without requesting permission',
   });
   await page.goto('/');
   await expect(
-    page.getByRole('button', { name: 'Start microphone' }),
+    page.getByRole('button', { name: 'Start session' }),
   ).toBeDisabled();
   await expect(
     page.getByText(

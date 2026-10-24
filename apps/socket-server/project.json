@@ -47,7 +47,10 @@
         "command": "node --env-file-if-exists=apps/socket-server/.env --watch apps/socket-server/src/main.ts",
         "env": {
           "FIREBASE_PROJECT_ID": "demo-living-community-assistant",
-          "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099"
+          "FIREBASE_AUTH_EMULATOR_HOST": "127.0.0.1:9099",
+          "FIRESTORE_EMULATOR_HOST": "127.0.0.1:8080",
+          "FIREBASE_STORAGE_EMULATOR_HOST": "127.0.0.1:9199",
+          "FIREBASE_STORAGE_BUCKET": "demo-living-community-assistant.firebasestorage.app"
         }
       }
     }

@@ -34,6 +34,8 @@ function setup() {
   const connection = Object.assign(vi.fn(), {
     startAudio: vi.fn<SocketConnection['startAudio']>(async () => undefined),
     sendAudio: vi.fn<SocketConnection['sendAudio']>(async () => undefined),
+    endCall: vi.fn(async () => undefined),
+    retrySave: vi.fn(async () => undefined),
     stopAudio: vi.fn(async () => undefined),
     reportPlayback: vi.fn(),
     onTranscript: vi.fn(() => vi.fn()),
