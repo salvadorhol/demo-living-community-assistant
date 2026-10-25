@@ -33,6 +33,7 @@ resource "google_project_service" "deployment" {
     "iam.googleapis.com",
     "firestore.googleapis.com",
     "identitytoolkit.googleapis.com",
+    "firebasestorage.googleapis.com",
   ])
   service            = each.key
   disable_on_destroy = false
@@ -53,7 +54,7 @@ resource "google_firestore_database" "default" {
   name                    = "(default)"
   location_id             = var.firestore_location_id
   type                    = "FIRESTORE_NATIVE"
-  delete_protection_state = "DELETE_PROTECTION_ENABLED"
+  delete_protection_state = var.firestore_delete_protection_state
   deletion_policy         = "ABANDON"
   depends_on              = [google_project_service.deployment]
 }
@@ -65,6 +66,7 @@ data "google_project" "runtime" {
 }
 
 resource "google_project_iam_member" "functions_firestore_user" {
+  count      = var.functions_firestore_access ? 1 : 0
   provider   = google-beta
   project    = var.project_id
   role       = "roles/datastore.user"
@@ -72,12 +74,17 @@ resource "google_project_iam_member" "functions_firestore_user" {
   depends_on = [google_project_service.deployment]
 }
 
+moved {
+  from = google_project_iam_member.functions_firestore_user
+  to   = google_project_iam_member.functions_firestore_user[0]
+}
+
 
 resource "google_storage_bucket" "recordings" {
   provider                    = google-beta
   project                     = var.project_id
   name                        = "${var.project_id}-call-recordings"
-  location                    = var.firestore_location_id
+  location                    = var.recordings_location_id
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = false

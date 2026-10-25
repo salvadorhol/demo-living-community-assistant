@@ -25,12 +25,16 @@ export async function deploy(
   const firebase = JSON.parse(
     readFileSync(resolve(root, 'firebase.json'), 'utf8'),
   );
-  firebase.storage = {
-    ...firebase.storage,
-    bucket:
-      process.env.FIREBASE_STORAGE_BUCKET?.trim() ||
-      `${projectId}-call-recordings`,
-  };
+  // The CLI resolves object-form Storage configuration through the default
+  // bucket, even when it includes a bucket name. Array form preserves it.
+  firebase.storage = [
+    {
+      ...firebase.storage,
+      bucket:
+        process.env.FIREBASE_STORAGE_BUCKET?.trim() ||
+        `${projectId}-call-recordings`,
+    },
+  ];
   if (target === 'hosting') {
     const output = resolve(root, firebase.hosting.public);
     if (

@@ -70,6 +70,7 @@ export default defineConfig(async ({ command, mode }) => {
       outDir: './dist',
       emptyOutDir: true,
       reportCompressedSize: true,
+      chunkSizeWarningLimit: 3000,
       commonjsOptions: {
         transformMixedEsModules: true,
       },

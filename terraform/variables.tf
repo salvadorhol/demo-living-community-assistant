@@ -28,6 +28,28 @@ variable "hosting_app_id" {
   default     = null
 }
 
+variable "recordings_location_id" {
+  description = "Recordings bucket location, independent of the Firestore database location."
+  type        = string
+  default     = "us-central1"
+}
+
+variable "firestore_delete_protection_state" {
+  description = "Match the existing database protection setting when importing."
+  type        = string
+  default     = "DELETE_PROTECTION_ENABLED"
+  validation {
+    condition     = contains(["DELETE_PROTECTION_ENABLED", "DELETE_PROTECTION_DISABLED"], var.firestore_delete_protection_state)
+    error_message = "Use DELETE_PROTECTION_ENABLED or DELETE_PROTECTION_DISABLED."
+  }
+}
+
+variable "functions_firestore_access" {
+  description = "Grant the default Functions runtime Firestore access only when its functions require it."
+  type        = bool
+  default     = true
+}
+
 variable "socket_service_account" {
   description = "Optional service account email for the standalone socket server."
   type        = string

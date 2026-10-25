@@ -51,6 +51,7 @@ vitest.config.*.timestamp*
 test-output
 
 # Local deployment configuration and Firebase artifacts
+/Makefile
 .env
 .env.*
 !.env.example
