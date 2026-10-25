@@ -45,6 +45,8 @@ export default defineConfig({
     {
       command: 'node apps/socket-server/src/voice-fixture.ts',
       env: {
+        FIREBASE_FUNCTIONS_EMULATOR_HOST: '127.0.0.1:5301',
+        FIREBASE_FUNCTIONS_REGION: 'us-central1',
         FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399',
         FIRESTORE_EMULATOR_HOST: '127.0.0.1:8380',
         FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9398',

@@ -1,3 +1,5 @@
+import { createAvailabilityTools } from './ai/tools/availability.ts';
+import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
 import { ConfigurationError } from './configuration-error.ts';
 import { createLogger } from './logger.ts';
 import { installFatalLogging, installShutdown } from './lifecycle.ts';
@@ -40,6 +42,9 @@ try {
     createVoiceAgent({
       voice: createRealtimeVoice(undefined, undefined, {
         maxOutputQueueMs: config.voiceOutputQueueMs,
+        tools: createAvailabilityTools(
+          readFirebaseToolConfig(config.firebaseProjectId),
+        ),
       }),
       transcription: (context) => createTranscriptionSession(context),
       metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },
@@ -66,6 +71,7 @@ try {
         voiceConfigured: Boolean(process.env.OPENAI_API_KEY),
         voiceOutputQueueMs: config.voiceOutputQueueMs,
         emulators: [
+          'FIREBASE_FUNCTIONS_EMULATOR_HOST',
           'FIREBASE_AUTH_EMULATOR_HOST',
           'FIRESTORE_EMULATOR_HOST',
           'FIREBASE_STORAGE_EMULATOR_HOST',

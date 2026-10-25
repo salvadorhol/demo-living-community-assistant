@@ -32,6 +32,7 @@ export interface VoiceAgentFactory {
   metadata?: Readonly<Record<string, string>>;
   create(context: {
     uid: string;
+    callId?: string;
     logger?: AppLogger;
     transcript?(event: ProviderTranscript): void;
     speechStarted?(): void;

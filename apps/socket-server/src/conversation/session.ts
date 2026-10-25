@@ -283,6 +283,7 @@ export function createConversationSession({
           limit.unref();
           agent = factory.create({
             uid: uid,
+            callId: current.id,
             logger: logger.child({ callId: current.id }),
             transcript: (value) => acceptTranscript(value, owner),
             speechStarted: () => {

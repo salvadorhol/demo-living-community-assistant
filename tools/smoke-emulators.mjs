@@ -37,9 +37,12 @@ try {
       'demo-living-community-assistant',
       '--config',
       configPath,
-      'node tools/smoke-health.mjs && node tools/test-call-security.mjs',
+      'node tools/smoke-health.mjs && node tools/smoke-tools.mjs && node tools/test-call-security.mjs',
     ],
-    { cwd: workspaceRoot },
+    {
+      cwd: workspaceRoot,
+      env: { ...process.env, FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH: 'true' },
+    },
   );
 } finally {
   rmSync(configPath, { force: true });

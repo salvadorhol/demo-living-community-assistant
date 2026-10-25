@@ -1,3 +1,5 @@
+import { ToolCalls } from './tool-calls.ts';
+import type { ToolRegistry } from '../tools/registry.ts';
 import { OutputPlayback } from './output-playback.ts';
 import {
   VOICE_LIMITS,
@@ -22,7 +24,7 @@ import {
 export function createRealtimeVoice(
   key = readOpenAIKey(),
   connect: ConnectOpenAI = (url, options) => new WebSocket(url, options),
-  options: { maxOutputQueueMs?: number } = {},
+  options: { maxOutputQueueMs?: number; tools?: ToolRegistry } = {},
 ): VoiceAgentFactory {
   const maxOutputQueueMs = readOutputQueueMs(options.maxOutputQueueMs);
   return {
@@ -30,6 +32,7 @@ export function createRealtimeVoice(
     metadata: { model: ASSISTANT_PROFILE.model },
     create({
       uid,
+      callId,
       output,
       transcript,
       turnEnded,
@@ -58,7 +61,18 @@ export function createRealtimeVoice(
       function invalidateControl() {
         controlAbort?.abort();
       }
-      const activeResponseId = () => responseId ?? playback.responseId;
+      const activeResponseId = () =>
+        responseId ?? playback.responseId ?? tools.pendingResponseId;
+      const tools = new ToolCalls({
+        registry: options.tools,
+        uid,
+        callId,
+        logger: () => log,
+        canContinue: () =>
+          listening && !disposed && !responseId && !controlPending,
+        send,
+        fail,
+      });
       const playback = new OutputPlayback({
         maxOutputQueueMs,
         logger: log,
@@ -109,6 +123,7 @@ export function createRealtimeVoice(
         playback.dispose();
         disposed = true;
         lifetime.abort();
+        tools.invalidate();
         listening = false;
         clearTimeout(setupTimer);
         rejectSetup?.(new Error('Voice connection closed.'));
@@ -138,6 +153,7 @@ export function createRealtimeVoice(
         });
       }
       function interrupt(cancelResponse = true) {
+        if (cancelResponse) tools.invalidate();
         log.debug(
           { event: 'voice.interrupted', responseId },
           'Assistant playback interrupted',
@@ -163,7 +179,10 @@ export function createRealtimeVoice(
                 response.metadata?.controlId !== replacementControlId)
             )
               invalidateControl();
-            if (!listening) {
+            if (
+              !listening ||
+              !tools.acceptResponse(response.id, response.metadata)
+            ) {
               send({ type: 'response.cancel', response_id: response.id });
               cancelled.add(response.id);
             } else {
@@ -209,6 +228,7 @@ export function createRealtimeVoice(
             break;
           }
           case 'input_audio_buffer.speech_started':
+            tools.invalidate(true);
             invalidateControl();
             speechStarted?.();
             interrupt();
@@ -235,7 +255,13 @@ export function createRealtimeVoice(
             playback.complete(String(event.item_id));
             break;
           case 'response.done': {
-            const response = event.response as { id: string; status: string };
+            const response = event.response as {
+              id: string;
+              status: string;
+              output?: unknown[];
+            };
+            const owned =
+              responseId === response.id && !cancelled.has(response.id);
             playback.generationFinished(response.id, response.status);
             if (responseId === response.id) responseId = undefined;
             if (response.status === 'failed')
@@ -246,6 +272,7 @@ export function createRealtimeVoice(
                   }
                 ).status_details?.error?.code,
               });
+            if (owned) tools.complete(response);
             if (cancelled.size > 128)
               cancelled.delete(cancelled.values().next().value as string);
             break;
@@ -414,6 +441,9 @@ export function createRealtimeVoice(
                     type: 'realtime',
                     instructions: ASSISTANT_PROFILE.instructions,
                     output_modalities: ['audio'],
+                    ...(tools.definitions.length
+                      ? { tools: tools.definitions, tool_choice: 'auto' }
+                      : {}),
                     audio: {
                       input: {
                         format: { type: 'audio/pcm', rate: 24000 },
@@ -463,6 +493,7 @@ export function createRealtimeVoice(
         beginInput() {
           if (!ready || disposed) throw new Error('Voice not ready');
           playback.flushTruncation();
+          tools.invalidate(true);
           listening = true;
           send({
             type: 'session.update',

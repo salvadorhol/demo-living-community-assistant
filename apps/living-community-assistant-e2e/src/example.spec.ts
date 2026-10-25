@@ -113,6 +113,12 @@ test('streams microphone audio to the authenticated server and releases capture 
     page.getByText('Hello from the resident.').first(),
   ).toBeVisible();
   await expect(page.getByText('Hello! How can I help?').first()).toBeVisible();
+  await expect(
+    page.getByText(/Sample availability: Maple, Oak/).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Sample tour slots: 2026-11-02T10:00:00-05:00/).first(),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Pause' }).click();
   await expect(status).toContainText(
     'Start a session to talk with the assistant.',

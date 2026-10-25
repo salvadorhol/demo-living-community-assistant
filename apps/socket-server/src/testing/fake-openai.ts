@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { AddressInfo } from 'node:net';
 
 /** Local deterministic provider for browser tests; never contacts OpenAI. */
-export async function createFakeOpenAI() {
+export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
   const upstream = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>((resolve) => upstream.once('listening', resolve));
   upstream.on('connection', (socket) => {
@@ -11,6 +11,17 @@ export async function createFakeOpenAI() {
     let transcribing = false;
     let active = false;
     let responded = false;
+    let toolNames: string[] = [];
+    const results = new Map<
+      string,
+      {
+        ok?: boolean;
+        result?: {
+          floorPlans?: { name: string }[];
+          appointments?: { startsAt: string }[];
+        };
+      }
+    >();
     socket.on('message', (data) => {
       const event = JSON.parse(data.toString());
       if (
@@ -47,6 +58,40 @@ export async function createFakeOpenAI() {
         }
         return;
       }
+      if (
+        event.type === 'conversation.item.create' &&
+        event.item?.type === 'function_call_output'
+      ) {
+        results.set(event.item.call_id, JSON.parse(event.item.output));
+        return;
+      }
+      if (
+        options.toolCalls &&
+        event.type === 'input_audio_buffer.append' &&
+        active &&
+        !responded &&
+        toolNames.length
+      ) {
+        responded = true;
+        results.clear();
+        const id = `fixture-tools-${++turn}`;
+        const calls = toolNames.map((name, index) => ({
+          type: 'function_call',
+          call_id: `${id}-${index}`,
+          name,
+          arguments: '{}',
+        }));
+        socket.send(
+          JSON.stringify({ type: 'response.created', response: { id } }),
+        );
+        socket.send(
+          JSON.stringify({
+            type: 'response.done',
+            response: { id, status: 'completed', output: calls },
+          }),
+        );
+        return;
+      }
       if (event.type === 'response.cancel') {
         socket.send(
           JSON.stringify({
@@ -68,6 +113,10 @@ export async function createFakeOpenAI() {
         return;
       }
       if (event.type === 'session.update') {
+        if (event.session.tools)
+          toolNames = event.session.tools.map(
+            (tool: { name: string }) => tool.name,
+          );
         active = Boolean(event.session.audio?.input?.turn_detection);
         if (active) responded = false;
         socket.send(JSON.stringify({ type: 'session.updated' }));
@@ -85,6 +134,17 @@ export async function createFakeOpenAI() {
             response: { id, metadata: event.response?.metadata },
           }),
         );
+        const floorPlans = [...results.values()].flatMap(
+          (value) => value.result?.floorPlans ?? [],
+        );
+        const appointments = [...results.values()].flatMap(
+          (value) => value.result?.appointments ?? [],
+        );
+        const text =
+          'Hello! How can I help?' +
+          (options.toolCalls
+            ? ` Sample availability: ${floorPlans.map((plan) => plan.name).join(', ')}. Sample tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.`
+            : '');
         for (const type of [
           'response.output_audio_transcript.delta',
           'response.output_audio_transcript.done',
@@ -95,8 +155,8 @@ export async function createFakeOpenAI() {
               response_id: id,
               item_id: id,
               content_index: 0,
-              delta: 'Hello! How can I help?',
-              transcript: 'Hello! How can I help?',
+              delta: text,
+              transcript: text,
             }),
           );
         // A short audible tone tests real browser scheduling without cloud calls.

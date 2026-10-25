@@ -1,3 +1,5 @@
+import { createAvailabilityTools } from './ai/tools/availability.ts';
+import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
 /** Playwright-only entrypoint. Exercises the real adapter against a local fake OpenAI WebSocket. */
 import { createFakeOpenAI } from './testing/fake-openai.ts';
 import { initializeApp } from 'firebase-admin/app';
@@ -10,6 +12,7 @@ import { createRealtimeVoice } from './ai/openai/realtime-session.ts';
 import { createSocketServer } from './server.ts';
 import { readConfig } from './config.ts';
 
+process.env.FIREBASE_FUNCTIONS_EMULATOR_HOST ??= '127.0.0.1:5001';
 process.env.FIREBASE_AUTH_EMULATOR_HOST ??= '127.0.0.1:9099';
 process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
 process.env.FIREBASE_STORAGE_EMULATOR_HOST ??= '127.0.0.1:9199';
@@ -23,10 +26,14 @@ const firebase = initializeApp({
   projectId: config.firebaseProjectId,
   storageBucket: 'demo-living-community-assistant.firebasestorage.app',
 });
-const upstream = await createFakeOpenAI();
+const upstream = await createFakeOpenAI({ toolCalls: true });
 const connect = upstream.connect;
 const provider = createVoiceAgent({
-  voice: createRealtimeVoice('fixture-key', connect),
+  voice: createRealtimeVoice('fixture-key', connect, {
+    tools: createAvailabilityTools(
+      readFirebaseToolConfig(config.firebaseProjectId),
+    ),
+  }),
   transcription: (context) =>
     createTranscriptionSession(context, 'fixture-key', connect),
   metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },

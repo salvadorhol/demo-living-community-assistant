@@ -117,3 +117,23 @@ export interface VoiceSessionWarning {
   code: 'VOICE_OUTPUT_LIMIT';
   message: string;
 }
+
+/** Demonstration availability only; these lookups never create a booking. */
+export interface AvailableAppointmentsResponse {
+  mock: true;
+  timeZone: string;
+  appointments: { id: string; startsAt: string; durationMinutes: number }[];
+}
+export interface AvailableFloorPlansResponse {
+  mock: true;
+  currency: 'USD';
+  floorPlans: {
+    id: string;
+    name: string;
+    bedrooms: number;
+    bathrooms: number;
+    squareFeet: number;
+    monthlyRent: number;
+    availableUnits: number;
+  }[];
+}

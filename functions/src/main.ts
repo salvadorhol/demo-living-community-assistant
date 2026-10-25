@@ -15,3 +15,8 @@ export const healthCallable = onCall(
   { region: 'us-central1', maxInstances: 2 },
   (): HealthResponse => ({ status: 'ok', time: new Date().getTime() }),
 );
+
+export {
+  getAvailableAppointments,
+  getAvailableFloorPlans,
+} from './tools/availability';

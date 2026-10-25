@@ -50,7 +50,14 @@ if (!process.argv.includes('--ephemeral') && !process.argv.includes('--test')) {
 const child = spawn(
   process.execPath,
   [require.resolve('firebase-tools/lib/bin/firebase.js'), ...args],
-  { cwd: root, stdio: 'inherit', detached: true },
+  {
+    cwd: root,
+    stdio: 'inherit',
+    detached: true,
+    // Use the CLI/SDK's file-based discovery instead of an extra temporary
+    // HTTP server. The latter can time out before the emulator loads exports.
+    env: { ...process.env, FIREBASE_FUNCTIONS_DISCOVERY_OUTPUT_PATH: 'true' },
+  },
 );
 let stopping = false;
 function stop() {
