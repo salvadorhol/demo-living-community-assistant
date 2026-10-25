@@ -1,7 +1,11 @@
 import {setTimeout as delay} from 'node:timers/promises';
 import {onRequest} from 'firebase-functions/v2/https';
 import type {Request, Response} from 'express';
-import {appointments, floorPlans} from './mock-availability';
+import {
+  appointments,
+  floorPlans,
+  salesDirectorAvailability,
+} from './mock-availability';
 
 const options = {
   region: 'us-central1',
@@ -15,7 +19,8 @@ const MOCK_RESPONSE_DELAY_MS = 1500;
 async function respond(
   request: Request,
   response: Response,
-  value: unknown
+  value: unknown,
+  delayMs = MOCK_RESPONSE_DELAY_MS
 ): Promise<void> {
   response.set('Cache-Control', 'private, no-store');
   if (request.method !== 'POST') {
@@ -47,7 +52,7 @@ async function respond(
     return;
   }
 
-  await delay(MOCK_RESPONSE_DELAY_MS);
+  await delay(delayMs);
   response.status(200).json(value);
 }
 export const getAvailableAppointments = onRequest(
@@ -56,4 +61,10 @@ export const getAvailableAppointments = onRequest(
 );
 export const getAvailableFloorPlans = onRequest(options, (request, response) =>
   respond(request, response, floorPlans)
+);
+
+export const checkSalesDirectorAvailability = onRequest(
+  {...options, timeoutSeconds: 20},
+  (request, response) =>
+    respond(request, response, salesDirectorAvailability, 8_000)
 );

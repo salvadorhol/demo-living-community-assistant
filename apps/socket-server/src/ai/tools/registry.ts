@@ -28,6 +28,13 @@ export function createToolRegistry(definitions: readonly ToolDefinition[]) {
   const entries = new Map<string, ToolDefinition>();
   for (const entry of definitions) {
     if (
+      entry.timeoutMs !== undefined &&
+      (!Number.isFinite(entry.timeoutMs) || entry.timeoutMs <= 0)
+    )
+      throw new ConfigurationError(
+        'Tool timeout must be a positive finite number.',
+      );
+    if (
       !/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(entry.name) ||
       entries.has(entry.name)
     )
@@ -91,7 +98,7 @@ export function createToolRegistry(definitions: readonly ToolDefinition[]) {
                   'Availability lookup timed out. Please try again.',
                 ),
               ),
-            TOOL_LIMITS.timeoutMs,
+            definition.timeoutMs ?? TOOL_LIMITS.timeoutMs,
           );
         });
         log.info({ event: 'tool.started' }, 'Invoking voice tool');

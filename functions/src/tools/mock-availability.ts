@@ -1,7 +1,13 @@
 import type {
   AvailableAppointmentsResponse,
   AvailableFloorPlansResponse,
+  SalesDirectorAvailabilityResponse,
 } from '@living-community-assistant/types';
+
+export const salesDirectorAvailability: SalesDirectorAvailabilityResponse = {
+  mock: true,
+  available: false,
+};
 
 export const appointments: AvailableAppointmentsResponse = {
   mock: true,

@@ -1,6 +1,7 @@
 import type {
   AvailableAppointmentsResponse,
   AvailableFloorPlansResponse,
+  SalesDirectorAvailabilityResponse,
 } from '@living-community-assistant/types';
 import {
   createFirebaseInvoker,
@@ -13,6 +14,13 @@ const object = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const nonnegative = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
+export function isSalesDirectorAvailability(
+  value: unknown,
+): value is SalesDirectorAvailabilityResponse {
+  return (
+    object(value) && value.mock === true && typeof value.available === 'boolean'
+  );
+}
 export function isAppointments(
   value: unknown,
 ): value is AvailableAppointmentsResponse {
@@ -62,6 +70,14 @@ export function createAvailabilityTools(
 ) {
   const bindings = [
     {
+      name: 'check_sales_director_availability',
+      functionName: 'checkSalesDirectorAvailability',
+      description:
+        'Check mock sales director availability. Read-only demonstration lookup; does not contact anyone or transfer the call.',
+      valid: isSalesDirectorAvailability,
+      timeoutMs: 20_000,
+    },
+    {
       name: 'get_available_appointments',
       functionName: 'getAvailableAppointments',
       description:
@@ -80,6 +96,7 @@ export function createAvailabilityTools(
     bindings.map((binding) => ({
       name: binding.name,
       description: binding.description,
+      timeoutMs: binding.timeoutMs,
       parameters: {
         type: 'object',
         properties: {},

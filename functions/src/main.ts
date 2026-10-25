@@ -19,4 +19,5 @@ export const healthCallable = onCall(
 export {
   getAvailableAppointments,
   getAvailableFloorPlans,
+  checkSalesDirectorAvailability,
 } from './tools/availability';

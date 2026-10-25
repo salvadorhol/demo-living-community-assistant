@@ -17,6 +17,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
       {
         ok?: boolean;
         result?: {
+          available?: boolean;
           floorPlans?: { name: string }[];
           appointments?: { startsAt: string }[];
         };
@@ -143,7 +144,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
         const text =
           'Hello! How can I help?' +
           (options.toolCalls
-            ? ` Sample availability: ${floorPlans.map((plan) => plan.name).join(', ')}. Sample tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.`
+            ? ` Sample availability: ${floorPlans.map((plan) => plan.name).join(', ')}. Sample tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.${[...results.values()].some((value) => value.ok && value.result?.available === false) ? ' No sales director is available in this demo.' : ''}`
             : '');
         for (const type of [
           'response.output_audio_transcript.delta',

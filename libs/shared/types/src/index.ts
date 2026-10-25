@@ -124,6 +124,10 @@ export interface AvailableAppointmentsResponse {
   timeZone: string;
   appointments: { id: string; startsAt: string; durationMinutes: number }[];
 }
+export interface SalesDirectorAvailabilityResponse {
+  mock: true;
+  available: boolean;
+}
 export interface AvailableFloorPlansResponse {
   mock: true;
   currency: 'USD';

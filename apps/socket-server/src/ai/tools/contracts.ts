@@ -7,6 +7,7 @@ export interface ToolContext {
   readonly logger: AppLogger;
 }
 export interface ToolDefinition {
+  readonly timeoutMs?: number;
   readonly name: string;
   readonly description: string;
   readonly parameters: Readonly<Record<string, unknown>>;

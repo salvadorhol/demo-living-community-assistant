@@ -101,12 +101,14 @@ test('streams microphone audio to the authenticated server and releases capture 
     timeout: 15000,
   });
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
-            .audioPlaybackStarts ?? 0,
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
+              .audioPlaybackStarts ?? 0,
+        ),
+      { timeout: 20_000 },
     )
     .toBeGreaterThan(0);
   await expect(
@@ -114,7 +116,10 @@ test('streams microphone audio to the authenticated server and releases capture 
   ).toBeVisible();
   await expect(page.getByText('Hello! How can I help?').first()).toBeVisible();
   await expect(
-    page.getByText(/Sample availability: Maple, Oak/).first(),
+    page.getByText(/Sample availability: Fire, Maple, Oak/).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/No sales director is available in this demo/).first(),
   ).toBeVisible();
   await expect(
     page.getByText(/Sample tour slots: 2026-11-02T10:00:00-05:00/).first(),
@@ -142,12 +147,14 @@ test('streams microphone audio to the authenticated server and releases capture 
     timeout: 15000,
   });
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
-            .audioPlaybackStarts ?? 0,
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (globalThis as typeof globalThis & { audioPlaybackStarts?: number })
+              .audioPlaybackStarts ?? 0,
+        ),
+      { timeout: 20_000 },
     )
     .toBeGreaterThan(previousPlaybackStarts);
   await page.getByRole('button', { name: 'Pause' }).click();
