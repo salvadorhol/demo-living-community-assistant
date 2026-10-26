@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { TranscriptUpdate } from '@living-community-assistant/types';
-import App from './app';
+import { Workspace as App } from './app';
 import type { ConnectionStatus } from './api/socket';
 import type { VoiceStatus } from './audio/voice';
+vi.mock('./api/session', () => ({ lockApp: vi.fn(async () => undefined) }));
 
 const mocks = vi.hoisted(() => ({
   supported: true,

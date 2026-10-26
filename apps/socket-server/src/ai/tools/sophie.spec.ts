@@ -74,7 +74,7 @@ it('requires an exact read-back token, and a later turn before saving; merges vi
   const registry = createSophieTools(config, 'owner', { invoke });
   expect(
     registry.definitions.some((t) => t.name === 'save_contact_information'),
-  ).toBe(false);
+  ).toBe(true);
   expect(
     await registry.execute(
       call('prepare_contact_information', { profile: {} }),
@@ -154,8 +154,14 @@ it('replaces corrected drafts, expires confirmation, and never invokes after can
     ).toMatchObject({ ok: false });
     await vi.advanceTimersByTimeAsync(300_001);
     expect(
-      registry.definitions.some((t) => t.name === 'save_contact_information'),
-    ).toBe(false);
+      await registry.execute(
+        call('save_contact_information', {
+          confirmationToken: old.confirmationToken,
+          confirmed: true,
+        }),
+        context,
+      ),
+    ).toMatchObject({ ok: false });
     const abort = new AbortController();
     abort.abort();
     await expect(
@@ -237,15 +243,67 @@ it('separates per-conversation draft state and invalidates cached profiles after
   expect(invoke).toHaveBeenCalledTimes(2);
   const owner = createSophieTools(config, 'owner', { invoke, loader });
   const other = createSophieTools(config, 'other', { invoke, loader });
-  await owner.execute(
-    call('prepare_contact_information', {
-      profile: { firstName: 'James' },
-    }),
-    context,
+  const prepared = value(
+    await owner.execute(
+      call('prepare_contact_information', {
+        profile: { firstName: 'James' },
+      }),
+      context,
+    ),
   );
   owner.onUserTurn?.();
   other.onUserTurn?.();
   expect(
-    other.definitions.some((t) => t.name === 'save_contact_information'),
-  ).toBe(false);
+    await other.execute(
+      call('save_contact_information', {
+        confirmationToken: prepared.confirmationToken,
+        confirmed: true,
+      }),
+      { ...context, uid: 'other' },
+    ),
+  ).toMatchObject({ ok: false });
+});
+
+it('keeps save actions in the response tool snapshot and recovers an unsaved follow-up prerequisite', async () => {
+  const invoke = vi.fn(async (name: string) =>
+    name === 'saveContactInformation'
+      ? { profile: { firstName: 'James', email: 'james@example.com' } }
+      : { profile: {} },
+  );
+  const registry = createSophieTools(config, 'owner', { invoke });
+  // Realtime may capture tools before speech_stopped reaches this server.
+  const responseTools = registry.definitions;
+  const prepared = value(
+    await registry.execute(
+      call('prepare_contact_information', {
+        profile: { firstName: 'James', email: 'james@example.com' },
+      }),
+      context,
+    ),
+  );
+  const request = call('prepare_follow_up_request', {
+    kind: 'callback',
+    preferredTime: 'Tomorrow afternoon',
+  });
+  const missing = await registry.execute(request, context);
+  expect(missing).toMatchObject({
+    ok: false,
+    error: { code: 'CONTACT_REQUIRED' },
+  });
+  expect(JSON.stringify(missing)).toContain('save_contact_information');
+  expect(invoke).not.toHaveBeenCalled();
+  registry.onUserTurn?.();
+  expect(
+    responseTools.some((tool) => tool.name === 'save_contact_information'),
+  ).toBe(true);
+  expect(
+    await registry.execute(
+      call('save_contact_information', {
+        confirmationToken: prepared.confirmationToken,
+        confirmed: true,
+      }),
+      context,
+    ),
+  ).toMatchObject({ ok: true });
+  expect(await registry.execute(request, context)).toMatchObject({ ok: true });
 });

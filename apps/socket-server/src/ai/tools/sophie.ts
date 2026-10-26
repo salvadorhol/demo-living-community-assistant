@@ -145,7 +145,7 @@ export function createSophieTools(
     {
       name: 'get_community_information',
       description:
-        'Read the ACME community facts for one category. Use before answering community questions. Unlisted facts remain unknown; notProvided is not a negative answer.',
+        'Read the ACME community facts for one category. Use before answering community questions. Unlisted facts remain unknown; notProvided is not a negative answer. Mention a missing detail only if the visitor specifically requested it, then immediately offer a team-member callback. Never narrate tool mechanics.',
       parameters: shape({
         category: {
           type: 'string',
@@ -262,7 +262,9 @@ export function createSophieTools(
         if (!known.profile.email && !known.profile.phone)
           throw new ToolError(
             'CONTACT_REQUIRED',
-            'First collect and save a confirmed email or phone.',
+            draft?.kind === 'contact'
+              ? 'Contact details are prepared but not saved. If the visitor has confirmed the read-back in a later turn, call save_contact_information with the existing confirmation token before preparing this request. Otherwise ask them to confirm the prepared details. Do not ask for a different contact method or claim a save failed.'
+              : 'No saved email or phone is available. Prepare, confirm, and save a supplied email or phone before preparing this request. No contact write was attempted by this tool.',
           );
         return prepare(
           'request',
@@ -286,7 +288,8 @@ export function createSophieTools(
           ? 'Save the prepared contact values ONLY after the visitor explicitly confirms the read-back in a new turn.'
           : 'Save the confirmed prepared request as pending staff confirmation. This does not reserve a tour or schedule a callback.',
       parameters: shape({ confirmationToken: string, confirmed: yes }),
-      enabled: () => ready(kind),
+      // Keep save actions visible before VAD starts the confirmation response.
+      // Execution still enforces the token, later turn, and expiry below.
       write: true,
       validateArguments: (v: unknown) =>
         object(v) &&

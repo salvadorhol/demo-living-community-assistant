@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator, signInAnonymously } from 'firebase/auth';
+import {
+  getAuth,
+  connectAuthEmulator,
+  signInAnonymously,
+  signInWithCustomToken,
+} from 'firebase/auth';
 import {
   getFirestore,
   connectFirestoreEmulator,
@@ -26,6 +31,7 @@ import {
   initializeApp as initializeAdmin,
   deleteApp as deleteAdmin,
 } from 'firebase-admin/app';
+import { getAuth as adminAuth } from 'firebase-admin/auth';
 import { getFirestore as adminFirestore } from 'firebase-admin/firestore';
 import { getStorage as adminStorage } from 'firebase-admin/storage';
 const projectId = 'demo-living-community-assistant';
@@ -57,8 +63,20 @@ try {
   const owner = client('owner');
   const other = client('other');
   const anonymous = client('unauthenticated');
+  const unclaimed = client('unclaimed');
   const { user } = await signInAnonymously(owner.auth);
-  await signInAnonymously(other.auth);
+  // Retain a valid token for the very same UID without the authorization claim.
+  await signInWithCustomToken(
+    unclaimed.auth,
+    await adminAuth(admin).createCustomToken(user.uid),
+  );
+  await adminAuth(admin).setCustomUserClaims(user.uid, { appAccess: true });
+  await user.getIdToken(true);
+  const { user: otherUser } = await signInAnonymously(other.auth);
+  await adminAuth(admin).setCustomUserClaims(otherUser.uid, {
+    appAccess: true,
+  });
+  await otherUser.getIdToken(true);
   const path = `sessions/${user.uid}/calls/call`;
   const recording = `${path}/recording.wav`;
   await adminFirestore(admin)
@@ -80,7 +98,7 @@ try {
     .save(Buffer.from('RIFF-private-audio'), {
       metadata: { contentType: 'audio/wav' },
     });
-  for (const c of [owner, other, anonymous]) {
+  for (const c of [owner, other, anonymous, unclaimed]) {
     for (const document of [
       `sessions/${user.uid}`,
       followUp,

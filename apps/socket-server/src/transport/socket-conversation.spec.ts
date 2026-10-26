@@ -46,7 +46,8 @@ beforeEach(async () => {
       allowedOrigins: [],
       firebaseProjectId: 'demo',
     },
-    async () => ({ uid: 'shared-uid' }) as DecodedIdToken,
+    async () =>
+      ({ uid: 'shared-uid', appAccess: true }) as unknown as DecodedIdToken,
     { kind: 'conversation', create },
     undefined,
     undefined,

@@ -2,7 +2,7 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /sessions/{uid}/calls/{callId}/recording.wav {
-      allow get: if request.auth != null && request.auth.uid == uid;
+      allow get: if request.auth != null && request.auth.token.appAccess == true && request.auth.uid == uid;
       allow list, write: if false;
     }
     match /{path=**} { allow read, write: if false; }

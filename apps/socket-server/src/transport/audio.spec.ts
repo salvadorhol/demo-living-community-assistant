@@ -34,7 +34,7 @@ beforeEach(async () => {
     },
     async (token) => {
       if (token !== 'valid') throw new Error('unauthenticated');
-      return { uid: 'user' } as DecodedIdToken;
+      return { uid: 'user', appAccess: true } as unknown as DecodedIdToken;
     },
     factory,
   );

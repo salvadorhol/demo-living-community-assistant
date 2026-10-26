@@ -11,6 +11,10 @@ product, production monitoring, or extra validation agent in this iteration.
 
 The community information tool returns one card: pricing, amenities, care,
 payments, policies, contact, or careers. `notProvided` is distinct from false.
+Unknown fields stay internal unless the visitor specifically asks for that detail.
+When that happens, Sophie briefly acknowledges the gap and immediately offers a
+team-member callback using the existing pending-request flow. Tool names and API
+mechanics are not spoken. Live transfer is not implemented or promised.
 Starting monthly prices are $2,000 Independent Living and $3,000 Assisted Living;
 the entrance fee is $3,500. Layouts are Studio, 1 Bedroom / 1 Bath, and
 2 Bedroom / 1.5 Bath. Studio bathrooms, room sizes, room prices, and inventory
@@ -45,8 +49,7 @@ does not trigger another greeting. Recognition requires the same persisted
 anonymous Firebase identity, not merely the same physical visitor or device.
 
 Contact collection collects missing fields separately without a permission-to-remember gate.
-Preparation returns exact values and an opaque read-back token; saving is hidden
-until a later user speech turn. Corrected values require a new token and another
+Preparation returns exact values and an opaque read-back token; saving is available throughout the session but execution is blocked until a later user speech turn. Corrected values require a new token and another
 confirmation. Tokens expire after five minutes. All writes require confirmation,
 are serialized, and use stable idempotency keys. The model still interprets spoken
 assent; token/phase validation is not a proof that an utterance semantically meant

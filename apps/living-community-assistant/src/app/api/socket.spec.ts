@@ -23,7 +23,10 @@ const mocks = vi.hoisted(() => ({
     io: { on: vi.fn(), removeAllListeners: vi.fn() },
   },
 }));
-vi.mock('./session', () => ({ ensureAnonymousSession: mocks.session }));
+vi.mock('./session', () => ({
+  ensureAuthorizedSession: mocks.session,
+  lockApp: vi.fn(async () => undefined),
+}));
 vi.mock('socket.io-client', () => ({
   io: vi.fn((_url, options) => {
     mocks.options = options;
@@ -166,4 +169,20 @@ it('delivers transcripts only for a ready connection and removes subscriptions',
   connection();
   mocks.handlers['transcript:update'](update);
   expect(listener).toHaveBeenCalledTimes(1);
+});
+
+it('does not retry forbidden connections and signs out to restore the password gate', async () => {
+  const { lockApp } = await import('./session');
+  const status = vi.fn();
+  startSocket(status);
+  await Promise.resolve();
+  mocks.socket.connect.mockClear();
+  mocks.handlers.connect_error(
+    Object.assign(new Error('Password required'), {
+      data: { code: 'FORBIDDEN' },
+    }),
+  );
+  expect(mocks.socket.disconnect).toHaveBeenCalled();
+  expect(mocks.socket.connect).not.toHaveBeenCalled();
+  expect(lockApp).toHaveBeenCalledOnce();
 });

@@ -31,6 +31,7 @@ resource "google_project_service" "deployment" {
     "secretmanager.googleapis.com",
     "logging.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "firestore.googleapis.com",
     "identitytoolkit.googleapis.com",
     "firebasestorage.googleapis.com",
@@ -113,4 +114,22 @@ resource "google_project_iam_member" "socket_firestore" {
   project  = var.project_id
   role     = "roles/datastore.user"
   member   = "serviceAccount:${var.socket_service_account}"
+}
+
+# The password exchange creates visitor identities and signs custom tokens using
+# the default 2nd-gen Functions runtime account, without service-account keys.
+resource "google_project_iam_member" "functions_auth_admin" {
+  provider   = google-beta
+  project    = var.project_id
+  role       = "roles/firebaseauth.admin"
+  member     = "serviceAccount:${data.google_project.runtime.number}-compute@developer.gserviceaccount.com"
+  depends_on = [google_project_service.deployment]
+}
+
+resource "google_service_account_iam_member" "functions_token_signer" {
+  provider           = google-beta
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${data.google_project.runtime.number}-compute@developer.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${data.google_project.runtime.number}-compute@developer.gserviceaccount.com"
+  depends_on         = [google_project_service.deployment]
 }

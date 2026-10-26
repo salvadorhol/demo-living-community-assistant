@@ -1,3 +1,4 @@
+import { prepareEmulatorSecrets } from './emulator-secrets.mjs';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -25,6 +26,7 @@ for (const [service, port] of Object.entries({
 config.emulators.firestore.websocketPort = 9250;
 config.emulators.ui.enabled = false;
 try {
+  prepareEmulatorSecrets({ root: workspaceRoot, test: true });
   writeFileSync(configPath, JSON.stringify(config));
   run(
     process.execPath,
@@ -37,7 +39,7 @@ try {
       'demo-living-community-assistant',
       '--config',
       configPath,
-      'node tools/smoke-health.mjs && node tools/smoke-tools.mjs && node tools/smoke-profile.mjs && node tools/test-call-security.mjs',
+      'node tools/smoke-health.mjs && node tools/smoke-access.mjs && node tools/smoke-tools.mjs && node tools/smoke-profile.mjs && node tools/test-call-security.mjs',
     ],
     {
       cwd: workspaceRoot,

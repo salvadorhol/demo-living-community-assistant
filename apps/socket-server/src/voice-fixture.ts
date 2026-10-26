@@ -11,6 +11,7 @@ import { createVoiceAgent } from './ai/create-agent.ts';
 import { ASSISTANT_PROFILE } from './ai/assistant-profile.ts';
 import { createRealtimeVoice } from './ai/openai/realtime-session.ts';
 import { createSocketServer } from './server.ts';
+import { createLogger } from './logger.ts';
 import { readConfig } from './config.ts';
 
 process.env.FIREBASE_FUNCTIONS_EMULATOR_HOST ??= '127.0.0.1:5001';
@@ -52,6 +53,8 @@ const server = createSocketServer(
     firebase,
     'demo-living-community-assistant.firebasestorage.app',
   ),
+  undefined,
+  createLogger({ LOG_LEVEL: 'warn', LOG_FORMAT: 'json' }),
 );
 server.httpServer.listen(config.port, config.host);
 async function shutdown() {

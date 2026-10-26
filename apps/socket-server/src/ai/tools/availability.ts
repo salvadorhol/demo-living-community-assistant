@@ -84,7 +84,7 @@ export function createAvailabilityTools(
       name: 'get_available_floor_plans',
       functionName: 'getAvailableFloorPlans',
       description:
-        'Look up available floor plans and supported room layouts. Room-specific prices, dimensions, and inventory counts are not provided.',
+        'Look up available floor plans and supported room layouts. Keep unknown fields internal unless the visitor specifically asks for that detail; then acknowledge the gap and offer a team-member callback. Do not invent room-specific prices, dimensions, or inventory counts.',
       valid: isFloorPlans,
     },
   ];

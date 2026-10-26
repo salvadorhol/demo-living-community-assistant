@@ -7,6 +7,8 @@ import { startSocket, type ConnectionStatus } from './api/socket';
 import { VoiceSession, type VoiceStatus } from './audio/voice';
 import { microphoneSupported } from './audio/capture';
 import styles from './app.module.scss';
+import { AccessGate } from './access-gate';
+import { lockApp } from './api/session';
 
 function MicrophoneIcon() {
   return (
@@ -26,6 +28,14 @@ function MicrophoneIcon() {
 }
 
 export function App() {
+  return (
+    <AccessGate>
+      <Workspace />
+    </AccessGate>
+  );
+}
+
+export function Workspace() {
   const [socketStatus, setSocketStatus] = useState<ConnectionStatus>({
     state: 'connecting',
   });
@@ -126,6 +136,16 @@ export function App() {
       <header className={styles['header']}>
         <h1>Living Community Assistant</h1>
         <div className={styles['connection']}>
+          <button
+            className={styles['textButton']}
+            onClick={() => {
+              void lockApp().catch(() =>
+                setCallError('Could not sign out. Please retry.'),
+              );
+            }}
+          >
+            Sign out
+          </button>
           <span role="status" aria-label="Socket connection status">
             <span
               aria-hidden="true"

@@ -36,7 +36,10 @@
         "{workspaceRoot}/.nvmrc",
         "{workspaceRoot}/functions/project.json"
       ],
-      "outputs": ["{workspaceRoot}/dist/functions"],
+      "outputs": [
+        "{workspaceRoot}/dist/functions/main.cjs",
+        "{workspaceRoot}/dist/functions/main.cjs.map"
+      ],
       "options": {
         "command": "esbuild functions/src/main.ts --bundle --platform=node --target=node24 --packages=external --format=cjs --outfile=dist/functions/main.cjs --sourcemap"
       }

@@ -27,3 +27,5 @@ export {
   saveContactInformation,
   createFollowUpRequest,
 } from './tools/contact';
+
+export {unlockApp} from './access';

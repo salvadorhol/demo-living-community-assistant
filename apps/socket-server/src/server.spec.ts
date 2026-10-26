@@ -24,11 +24,12 @@ beforeEach(async () => {
       allowedOrigins: ['http://localhost:4200'],
     },
     async (token) => {
-      if (!['valid-token', 'other-token'].includes(token))
+      if (!['valid-token', 'other-token', 'unclaimed-token'].includes(token))
         throw new Error('Invalid token');
       return {
+        ...(token === 'unclaimed-token' ? {} : { appAccess: true }),
         uid: token === 'other-token' ? 'other-user' : 'anonymous-user',
-      } as DecodedIdToken;
+      } as unknown as DecodedIdToken;
     },
   );
   await new Promise<void>((resolve, reject) => {
@@ -247,4 +248,13 @@ it('removes the last member and creates a fresh session on reconnect', async () 
   expect(await joinVoiceRoom(socket)).not.toEqual(room);
   await server.close();
   expect(server.io.sockets.adapter.rooms.size).toBe(0);
+});
+
+it('rejects a valid Firebase token without password authorization', async () => {
+  const socket = client('websocket');
+  socket.auth = { token: 'unclaimed-token' };
+  await expect(connect(socket)).rejects.toMatchObject({
+    data: { code: 'FORBIDDEN' },
+  });
+  expect(server.io.sockets.sockets.size).toBe(0);
 });

@@ -1,3 +1,4 @@
+import { prepareEmulatorSecrets } from './emulator-secrets.mjs';
 import { spawn } from 'node:child_process';
 import {
   existsSync,
@@ -11,6 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const root = resolve(import.meta.dirname, '..');
 const directory = resolve(root, 'firebase-emulator-data');
+prepareEmulatorSecrets({ root, test: process.argv.includes('--test') });
 const args = [
   'emulators:start',
   '--project',

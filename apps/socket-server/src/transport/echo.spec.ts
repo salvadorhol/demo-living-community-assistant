@@ -19,7 +19,8 @@ it.each(['websocket', 'polling'] as const)(
         allowedOrigins: [],
         firebaseProjectId: 'demo-living-community-assistant',
       },
-      async () => ({ uid: 'anonymous' }) as DecodedIdToken,
+      async () =>
+        ({ uid: 'visitor', appAccess: true }) as unknown as DecodedIdToken,
     );
     await new Promise<void>((resolve) =>
       server.httpServer.listen(0, '127.0.0.1', resolve),

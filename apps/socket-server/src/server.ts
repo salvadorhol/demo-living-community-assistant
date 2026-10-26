@@ -72,6 +72,18 @@ export function createSocketServer(
     }
     try {
       const decoded = await verifyToken(token);
+      if (decoded.appAccess !== true) {
+        logger.warn(
+          { event: 'socket.access_denied', socketId: socket.id },
+          'Password authorization required',
+        );
+        next(
+          Object.assign(new Error('Password authorization required.'), {
+            data: { code: 'FORBIDDEN' },
+          }),
+        );
+        return;
+      }
       socket.data.uid = decoded.uid;
       socket.data.authProvider =
         decoded.firebase?.sign_in_provider ?? 'unknown';

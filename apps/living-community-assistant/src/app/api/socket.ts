@@ -12,7 +12,7 @@ import type {
   TranscriptUpdate,
 } from '@living-community-assistant/types';
 import environment from '#firebase-environment';
-import { ensureAnonymousSession } from './session';
+import { ensureAuthorizedSession, lockApp } from './session';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionStatus {
@@ -52,7 +52,7 @@ export function startSocket(
       autoConnect: false,
       auth: async (callback) => {
         try {
-          const user = await ensureAnonymousSession();
+          const user = await ensureAuthorizedSession();
           const token = await user.getIdToken(forceRefresh);
           forceRefresh = false;
           if (!disposed) callback({ token });
@@ -114,6 +114,17 @@ export function startSocket(
   });
   socket.io.on('reconnect_attempt', () => onStatus({ state: 'connecting' }));
   socket.on('connect_error', (error: Error & { data?: { code?: string } }) => {
+    if (error.data?.code === 'FORBIDDEN') {
+      socket.disconnect();
+      onStatus({ state: 'disconnected', error: 'Password required.' });
+      void lockApp().catch(() =>
+        onStatus({
+          state: 'disconnected',
+          error: 'Could not sign out. Please retry.',
+        }),
+      );
+      return;
+    }
     if (error.data?.code === 'UNAUTHENTICATED' && !refreshed) {
       refreshed = true;
       forceRefresh = true;
@@ -130,7 +141,7 @@ export function startSocket(
     });
   });
   onStatus({ state: 'connecting' });
-  void ensureAnonymousSession().then(
+  void ensureAuthorizedSession().then(
     () => {
       if (!disposed) socket.connect();
     },

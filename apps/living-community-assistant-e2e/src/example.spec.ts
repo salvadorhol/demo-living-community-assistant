@@ -1,40 +1,26 @@
 import { test, expect, type Page } from '@playwright/test';
 
 async function storedUser(page: Page) {
-  return page.evaluate(
-    () =>
-      new Promise<{
-        uid: string;
-        isAnonymous: boolean;
-        stsTokenManager: { accessToken: string };
-      }>((resolve, reject) => {
-        const request = indexedDB.open('firebaseLocalStorageDb');
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-          const db = request.result;
-          const read = db
-            .transaction('firebaseLocalStorage')
-            .objectStore('firebaseLocalStorage')
-            .getAll();
-          read.onerror = () => {
-            db.close();
-            reject(read.error);
-          };
-          read.onsuccess = () => {
-            db.close();
-            resolve(
-              read.result.find((record) =>
-                record.fbase_key.startsWith('firebase:authUser:'),
-              )?.value,
-            );
-          };
-        };
-      }),
-  );
+  return page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) =>
+      key.startsWith('firebase:authUser:'),
+    );
+    return key
+      ? (JSON.parse(localStorage.getItem(key)!) as {
+          uid: string;
+          isAnonymous: boolean;
+          stsTokenManager: { accessToken: string };
+        })
+      : undefined;
+  });
 }
 
 test('shows the workspace and connects to the backend', async ({ page }) => {
   await page.goto('/');
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
     'Living Community Assistant',
   );
@@ -42,13 +28,13 @@ test('shows the workspace and connects to the backend', async ({ page }) => {
     page.getByRole('status', { name: 'Socket connection status' }),
   ).toHaveText('Socket on', { timeout: 60_000 });
   const user = await storedUser(page);
-  expect(user?.isAnonymous).toBe(true);
+  expect(user?.isAnonymous).toBe(false);
   expect(user?.uid).toBeTruthy();
   await page.reload();
   await expect(
     page.getByRole('status', { name: 'Socket connection status' }),
   ).toHaveText('Socket on', { timeout: 60_000 });
-  expect((await storedUser(page))?.uid).toBe(user.uid);
+  expect((await storedUser(page))?.uid).toBe(user!.uid);
 });
 
 test('streams microphone audio to the authenticated server and releases capture on Stop', async ({
@@ -92,6 +78,10 @@ test('streams microphone audio to the authenticated server and releases capture 
       externalRequests.push(request.url());
   });
   await page.goto('/');
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
   await expect(
     page.getByRole('status', { name: 'Socket connection status' }),
   ).toHaveText('Socket on');
@@ -174,17 +164,17 @@ test('streams microphone audio to the authenticated server and releases capture 
   );
   const user = await storedUser(page);
   const headers = {
-    Authorization: `Bearer ${user.stsTokenManager.accessToken}`,
+    Authorization: `Bearer ${user!.stsTokenManager.accessToken}`,
   };
   const root =
     'http://127.0.0.1:8380/v1/projects/demo-living-community-assistant/databases/(default)/documents';
-  const calls = await fetch(`${root}/sessions/${user.uid}/calls`, {
+  const calls = await fetch(`${root}/sessions/${user!.uid}/calls`, {
     headers,
   }).then((response) => response.json());
   expect(calls.documents).toHaveLength(1);
   const saved = calls.documents[0];
   expect(saved.fields.recordingStatus.stringValue).toBe('saved');
-  expect(saved.fields.uid.stringValue).toBe(user.uid);
+  expect(saved.fields.uid.stringValue).toBe(user!.uid);
   const recording = saved.fields.recording.mapValue.fields;
   const audio = await fetch(
     `http://127.0.0.1:9398/v0/b/${recording.bucket.stringValue}/o/${encodeURIComponent(recording.objectPath.stringValue)}?alt=media`,
@@ -229,6 +219,10 @@ test('explains unsupported microphone capability without requesting permission',
     Object.defineProperty(globalThis, 'AudioWorkletNode', { value: undefined });
   });
   await page.goto('/');
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
   await expect(
     page.getByRole('button', { name: 'Start session' }),
   ).toBeDisabled();
@@ -237,4 +231,34 @@ test('explains unsupported microphone capability without requesting permission',
       'Microphone streaming requires Web Audio and microphone access on HTTPS or localhost.',
     ),
   ).toBeVisible();
+});
+
+test('requires the password before connecting and locks again on sign-out', async ({
+  page,
+}) => {
+  const sockets: string[] = [];
+  page.on('websocket', (socket) => {
+    if (socket.url().includes('/socket.io/')) sockets.push(socket.url());
+  });
+  await page.goto('/');
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Start session/ })).toHaveCount(
+    0,
+  );
+  expect(sockets).toHaveLength(0);
+  await page.getByLabel('Password', { exact: true }).fill('wrong-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Incorrect password');
+  expect(sockets).toHaveLength(0);
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(
+    page.getByRole('status', { name: 'Socket connection status' }),
+  ).toHaveText('Socket on');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
 });
