@@ -2,8 +2,8 @@ import {
   createTranscriptObservation,
   type ResponseTarget,
 } from './transcript-observer.ts';
-import { ConfigurationError, voiceError } from '../configuration-error.ts';
-import { silentLogger } from '../logger.ts';
+import {ConfigurationError, voiceError} from '../configuration-error.ts';
+import {silentLogger} from '../logger.ts';
 import type {
   AudioOutputEvent,
   CallEndReason,
@@ -14,9 +14,9 @@ import type {
   AudioChunk,
   AudioStreamEnd,
 } from '@living-community-assistant/types';
-import type { ProviderTranscript, VoiceAgent } from '../ai/contracts.ts';
-import { SavedCall } from '../calls/saved-call.ts';
-import type { ConversationOptions, ConversationSession } from './contracts.ts';
+import type {ProviderTranscript, VoiceAgent} from '../ai/contracts.ts';
+import {SavedCall} from '../calls/saved-call.ts';
+import type {ConversationOptions, ConversationSession} from './contracts.ts';
 
 export function createConversationSession({
   uid,
@@ -28,7 +28,146 @@ export function createConversationSession({
   logger = silentLogger,
   events,
   observerFactory,
+  guardrail,
 }: ConversationOptions): ConversationSession {
+  let safetyStopped = false;
+  let safetySignal = new AbortController();
+  let safetyQueue: Promise<void> = Promise.resolve();
+  const checked = new Set<string>();
+  let history: string[] = [];
+  function terminateSafety(
+    reason: 'prompt_injection' | 'guardrail_unavailable',
+    owner: number
+  ) {
+    if (owner !== generation || !call || safetyStopped || ending || closed)
+      return;
+    safetyStopped = true;
+    safetySignal.abort();
+    if (closing) {
+      clearTimeout(closing.timer);
+      closing = undefined;
+    }
+    const callId = call.id;
+    events.output({
+      type: 'warning',
+      warning: {
+        callId,
+        code:
+          reason === 'prompt_injection'
+            ? 'PROMPT_INJECTION_DETECTED'
+            : 'GUARDRAIL_UNAVAILABLE',
+        message:
+          reason === 'prompt_injection'
+            ? 'Potential prompt injection detected. The call has been ended.'
+            : 'The safety check is unavailable. The call has been ended.',
+      },
+    });
+    events.output({type: 'closing', callId, reason});
+    events.status({callId, state: 'closing', endReason: reason});
+    // Dispose immediately; ordinary finalization may wait for final ASR results.
+    const old = agent;
+    agent = undefined;
+    input = undefined;
+    try {
+      old?.dispose();
+    } catch {
+      /* Finalize even if upstream cleanup fails. */
+    }
+    endBackground(reason);
+  }
+  function checkTranscript(value: ProviderTranscript, owner: number) {
+    if (
+      !guardrail ||
+      safetyStopped ||
+      ending ||
+      value.role !== 'user' ||
+      value.source !== 'transcription' ||
+      !value.isFinal ||
+      value.incomplete ||
+      !value.text.trim() ||
+      checked.has(value.id)
+    )
+      return;
+    checked.add(value.id);
+    const preceding = history.slice(-3);
+    let remaining = 12000;
+    for (let i = preceding.length - 1; i >= 0; i--) {
+      preceding[i] = preceding[i].slice(-remaining);
+      remaining -= preceding[i].length;
+      if (!remaining) {
+        preceding.splice(0, i);
+        break;
+      }
+    }
+    history = [...history.slice(-2), value.text];
+    const lifetime = safetySignal.signal;
+    const request = new AbortController();
+    const cancel = () => request.abort();
+    lifetime.addEventListener('abort', cancel, {once: true});
+    const started = Date.now();
+    const timer = setTimeout(() => {
+      request.abort();
+      if (!lifetime.aborted) {
+        logger.warn(
+          {
+            event: 'guardrail.failed',
+            callId: call?.id,
+            utteranceId: value.id,
+            category: 'timeout',
+          },
+          'Safety check timed out'
+        );
+        terminateSafety('guardrail_unavailable', owner);
+      }
+    }, guardrail.timeoutMs);
+    safetyQueue = safetyQueue
+      .then(async () => {
+        if (lifetime.aborted || request.signal.aborted) return;
+        try {
+          const probability = await guardrail.check(
+            value.text,
+            preceding,
+            request.signal
+          );
+          if (
+            lifetime.aborted ||
+            request.signal.aborted ||
+            owner !== generation
+          )
+            return;
+          logger.info(
+            {
+              event: 'guardrail.verdict',
+              callId: call?.id,
+              utteranceId: value.id,
+              model: 'gpt-6-luna',
+              probability,
+              latencyMs: Date.now() - started,
+            },
+            'Safety check completed'
+          );
+          if (probability >= guardrail.threshold)
+            terminateSafety('prompt_injection', owner);
+        } catch {
+          if (!lifetime.aborted) {
+            logger.warn(
+              {
+                event: 'guardrail.failed',
+                callId: call?.id,
+                utteranceId: value.id,
+                category: 'decisions_unavailable',
+              },
+              'Safety check unavailable'
+            );
+            terminateSafety('guardrail_unavailable', owner);
+          }
+        }
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        lifetime.removeEventListener('abort', cancel);
+      });
+  }
   let disconnected = false;
   const connected = () => !disconnected;
   let activity = 0;
@@ -53,18 +192,18 @@ export function createConversationSession({
       generation === target.generation &&
       activity === target.activity &&
       target.responseId &&
-      agent?.currentResponseId?.() === target.responseId,
+      agent?.currentResponseId?.() === target.responseId
     );
     if (!valid)
       logger.debug(
-        { event: 'conversation.stale_control', callId: target.callId },
-        'Ignoring stale response control',
+        {event: 'conversation.stale_control', callId: target.callId},
+        'Ignoring stale response control'
       );
     return valid;
   }
   async function applyControl(
     target: ResponseTarget,
-    instructions?: string,
+    instructions?: string
   ): Promise<boolean> {
     if (!validTarget(target) || !target.responseId || !agent) return false;
     if (
@@ -72,7 +211,7 @@ export function createConversationSession({
       (!instructions.trim() || instructions.length > 16_000)
     )
       throw new Error(
-        'Corrective instructions must contain 1–16000 characters.',
+        'Corrective instructions must contain 1–16000 characters.'
       );
     const signal = activitySignal.signal;
     const applied =
@@ -81,7 +220,7 @@ export function createConversationSession({
         : await agent.redirectResponse?.(
             target.responseId,
             instructions,
-            signal,
+            signal
           );
     return applied ?? false;
   }
@@ -108,21 +247,22 @@ export function createConversationSession({
       {
         signal: activitySignal.signal,
         target,
-        interruptResponse: (target) => applyControl(target),
+        interruptResponse: target => applyControl(target),
         redirectResponse: (target, instructions) =>
           applyControl(target, instructions),
-      },
+      }
     );
   }
   function acceptTranscript(value: ProviderTranscript, owner: number) {
     if (owner !== generation || !call) return;
-    const { providerItemId, providerResponseId, source, ...update } = value;
+    const {providerItemId, providerResponseId, source, ...update} = value;
     providerReferences.set(value.id, {
       providerItemId,
       providerResponseId,
       source,
     });
     call.update(update);
+    checkTranscript(value, owner);
   }
   let agent: VoiceAgent | undefined;
   let generation = 0;
@@ -154,11 +294,11 @@ export function createConversationSession({
   let lastCallId: string | undefined;
   const retained = new Map<string, SavedCall>();
   function endBackground(reason: string) {
-    void end(reason).catch((err) =>
+    void end(reason).catch(err =>
       logger.error(
-        { event: 'call.finalization_failed', err, callId: call?.id, reason },
-        'Call finalization failed',
-      ),
+        {event: 'call.finalization_failed', err, callId: call?.id, reason},
+        'Call finalization failed'
+      )
     );
   }
   async function end(reason: string) {
@@ -171,12 +311,13 @@ export function createConversationSession({
       closing = undefined;
     }
     clearTimeout(limit);
+    safetySignal.abort();
     invalidateObservation();
     observation?.dispose();
     const started = Date.now();
     logger.info(
-      { event: 'call.ending', callId: current.id, reason },
-      'Ending call',
+      {event: 'call.ending', callId: current.id, reason},
+      'Ending call'
     );
     current.ending();
     lastCallId = current.id;
@@ -187,16 +328,16 @@ export function createConversationSession({
         old?.pause();
       } catch (err) {
         logger.debug(
-          { event: 'voice.pause_failed', err, callId: current.id },
-          'Provider already unavailable during finalization',
+          {event: 'voice.pause_failed', err, callId: current.id},
+          'Provider already unavailable during finalization'
         );
       }
       try {
         await old?.finish?.();
       } catch (err) {
         logger.warn(
-          { event: 'transcription.finish_failed', err, callId: current.id },
-          'Transcription finalization failed',
+          {event: 'transcription.finish_failed', err, callId: current.id},
+          'Transcription finalization failed'
         );
         current.degraded();
       }
@@ -211,7 +352,7 @@ export function createConversationSession({
           state: current.state,
           durationMs: Date.now() - started,
         },
-        'Call finalization completed',
+        'Call finalization completed'
       );
       if (current.state === 'failed') retained.set(current.id, current);
     })().finally(() => {
@@ -219,7 +360,7 @@ export function createConversationSession({
     });
     return ending;
   }
-  let input: { id: string; sequence: number; ready: boolean } | undefined;
+  let input: {id: string; sequence: number; ready: boolean} | undefined;
   const failed = (error?: unknown): AudioAck => {
     const failure = voiceError(error);
     return {
@@ -243,7 +384,7 @@ export function createConversationSession({
     old?.dispose();
   }
   function output(event: AudioOutputEvent, owner: number) {
-    if (owner !== generation) return;
+    if (owner !== generation || safetyStopped) return;
     if (closing) {
       if (event.type === 'start') {
         closing.streamId = event.stream.streamId;
@@ -281,30 +422,35 @@ export function createConversationSession({
           message: 'An input stream is already active.',
         };
       }
-      const run = { id: value.streamId, sequence: 0, ready: false };
+      const run = {id: value.streamId, sequence: 0, ready: false};
       input = run;
       initializing = true;
       const started = Date.now();
       try {
         if (!agent) {
+          safetyStopped = false;
+          safetySignal = new AbortController();
+          safetyQueue = Promise.resolve();
+          checked.clear();
+          history = [];
           const owner = ++generation;
           const current = new SavedCall(
             uid,
             store,
-            (status) => {
+            status => {
               if (connected()) events.status(status);
             },
-            (update) => {
+            update => {
               if (connected()) publishTranscript(update);
             },
             logger,
-            factory.metadata,
+            factory.metadata
           );
           call = current;
           observation = createTranscriptObservation(
             observerFactory,
-            { callId: current.id, uid },
-            logger,
+            {callId: current.id, uid},
+            logger
           );
           await current.start(roomId, authentication);
           if (input !== run || !connected() || ending) {
@@ -325,11 +471,9 @@ export function createConversationSession({
           agent = factory.create({
             uid: uid,
             callId: current.id,
-            logger: logger.child({ callId: current.id }),
-            transcript: (value) => acceptTranscript(value, owner),
-            closing(
-              action = { reason: 'demo_sales_handoff', immediate: false },
-            ) {
+            logger: logger.child({callId: current.id}),
+            transcript: value => acceptTranscript(value, owner),
+            closing(action = {reason: 'demo_sales_handoff', immediate: false}) {
               if (owner !== generation || !call || closing || ending) return;
               invalidateObservation();
               closing = {
@@ -364,9 +508,13 @@ export function createConversationSession({
             responseStarted: () => {
               if (owner === generation) invalidateObservation();
             },
-            degraded: () => current.degraded(),
-            metadata: (info) => current.metadata(info),
-            output: (event) => output(event, owner),
+            degraded: () => {
+              if (owner !== generation || ending || safetyStopped) return;
+              current.degraded();
+              if (guardrail) terminateSafety('guardrail_unavailable', owner);
+            },
+            metadata: info => current.metadata(info),
+            output: event => output(event, owner),
           });
         }
         const session = agent;
@@ -386,14 +534,14 @@ export function createConversationSession({
             callId: call?.id,
             durationMs: Date.now() - started,
           },
-          'Voice input ready',
+          'Voice input ready'
         );
         call?.pause(false);
-        return { ok: true };
+        return {ok: true};
       } catch (err) {
         logger.error(
-          { event: 'conversation.operation_failed', err, callId: call?.id },
-          'Conversation operation failed',
+          {event: 'conversation.operation_failed', err, callId: call?.id},
+          'Conversation operation failed'
         );
         if (input === run) {
           try {
@@ -405,19 +553,19 @@ export function createConversationSession({
                 err: finalizeError,
                 callId: call?.id,
               },
-              'Failed start cleanup failed',
+              'Failed start cleanup failed'
             );
           }
         }
         if (err instanceof ConfigurationError)
-          events.output({ type: 'error', error: voiceError(err) });
+          events.output({type: 'error', error: voiceError(err)});
         return failed(err);
       } finally {
         initializing = false;
       }
     },
     write(value: AudioChunk): AudioAck {
-      if (closing && value?.streamId === input?.id) return { ok: true };
+      if (closing && value?.streamId === input?.id) return {ok: true};
       if (!input?.ready || !value || value.streamId !== input.id) {
         return {
           ok: false,
@@ -435,11 +583,11 @@ export function createConversationSession({
         agent?.write(value.data);
         call?.recording.append(`input-${input.id}`, value.data, true);
         input.sequence++;
-        return { ok: true };
+        return {ok: true};
       } catch (err) {
         logger.error(
-          { event: 'conversation.operation_failed', err, callId: call?.id },
-          'Conversation operation failed',
+          {event: 'conversation.operation_failed', err, callId: call?.id},
+          'Conversation operation failed'
         );
         endBackground('provider_error');
         events.output({
@@ -453,7 +601,7 @@ export function createConversationSession({
       }
     },
     pause(value: AudioStreamEnd): AudioAck {
-      if (closing && value?.streamId === input?.id) return { ok: true };
+      if (closing && value?.streamId === input?.id) return {ok: true};
       if (!input || value?.streamId !== input.id) {
         return {
           ok: false,
@@ -469,11 +617,11 @@ export function createConversationSession({
           agent?.pause();
           call?.pause(true);
         } else endBackground('cancelled'); // Cancel initialization rather than leaving a late connection alive.
-        return { ok: true };
+        return {ok: true};
       } catch (err) {
         logger.error(
-          { event: 'conversation.operation_failed', err, callId: call?.id },
-          'Conversation operation failed',
+          {event: 'conversation.operation_failed', err, callId: call?.id},
+          'Conversation operation failed'
         );
         endBackground('provider_error');
         return failed();
@@ -496,8 +644,8 @@ export function createConversationSession({
         }
       } catch (err) {
         logger.error(
-          { event: 'conversation.operation_failed', err, callId: call?.id },
-          'Conversation operation failed',
+          {event: 'conversation.operation_failed', err, callId: call?.id},
+          'Conversation operation failed'
         );
         endBackground('provider_error');
         events.output({
@@ -517,7 +665,7 @@ export function createConversationSession({
           message: 'No matching call.',
         };
       if (call?.id === callId) endBackground('ended');
-      return { ok: true };
+      return {ok: true};
     },
     retrySave(callId: string): AudioAck {
       const current = retained.get(callId);
@@ -527,19 +675,19 @@ export function createConversationSession({
           code: 'INVALID_STREAM',
           message: 'No matching failed call.',
         };
-      logger.info({ event: 'call.retry', callId }, 'Retrying call save');
+      logger.info({event: 'call.retry', callId}, 'Retrying call save');
       void current
         .finish('ended')
         .then(() => {
           if (current.state === 'saved') retained.delete(current.id);
         })
-        .catch((err) =>
+        .catch(err =>
           logger.error(
-            { event: 'call.retry_failed', err, callId },
-            'Call retry failed',
-          ),
+            {event: 'call.retry_failed', err, callId},
+            'Call retry failed'
+          )
         );
-      return { ok: true };
+      return {ok: true};
     },
     disconnect() {
       disconnected = true;

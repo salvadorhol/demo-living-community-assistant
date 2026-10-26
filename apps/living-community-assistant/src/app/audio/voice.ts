@@ -1,7 +1,7 @@
-import { AUDIO_FORMAT } from './format';
-import type { SocketConnection } from '../api/socket';
-import { MicrophoneCapture } from './capture';
-import { AudioPlayback } from './playback';
+import {AUDIO_FORMAT} from './format';
+import type {SocketConnection} from '../api/socket';
+import {MicrophoneCapture} from './capture';
+import {AudioPlayback} from './playback';
 
 // PCM16 mono at 24 kHz is 48,000 bytes/second. Bound queued + unacknowledged
 // audio to 500 ms, while pipelining enough 40 ms frames for hosted round trips.
@@ -42,29 +42,47 @@ export class VoiceSession {
   constructor(
     private connection: SocketConnection,
     private status: (status: VoiceStatus) => void,
-    private playbackIssue: (message?: string) => void,
+    private playbackIssue: (message?: string) => void
   ) {
     this.playback = new AudioPlayback(
-      (message) => {
+      message => {
         playbackIssue(message);
         if (message && this.active) this.fail(this.active, new Error(message));
       },
-      (progress) => connection.reportPlayback(progress),
+      progress => connection.reportPlayback(progress)
     );
-    this.unsubscribe = connection.onAudio((event) => {
+    this.unsubscribe = connection.onAudio(event => {
       if (event.type === 'closing') {
         this.closing = true;
-        if (event.reason === 'visitor_requested') this.playback.clear();
+        if (
+          [
+            'visitor_requested',
+            'prompt_injection',
+            'guardrail_unavailable',
+          ].includes(event.reason)
+        )
+          this.playback.clear();
         const input = this.active;
         this.active = undefined;
         if (input) {
           input.capture.dispose();
           input.queue = [];
         }
-        this.status({ state: 'closing' });
+        this.status({
+          state: 'closing',
+          ...(this.warning ? {warning: this.warning} : {}),
+        });
         return;
       }
       if (event.type === 'warning') {
+        if (event.warning.code !== 'VOICE_OUTPUT_LIMIT') {
+          this.warning = event.warning.message;
+          this.playback.clear();
+          this.abort();
+          this.closing = true;
+          this.status({state: 'closing', warning: this.warning});
+          return;
+        }
         if (!this.active) return;
         this.warning = event.warning.message;
         this.status({
@@ -79,7 +97,7 @@ export class VoiceSession {
         if (this.active) this.fail(this.active, new Error(event.error.message));
         else {
           this.playback.clear();
-          this.status({ state: 'error', error: event.error.message });
+          this.status({state: 'error', error: event.error.message});
         }
       } else if (
         this.active ||
@@ -97,14 +115,14 @@ export class VoiceSession {
     } catch (error) {
       if (this.disposed) return;
       this.playbackIssue(
-        error instanceof Error ? error.message : 'Audio playback failed.',
+        error instanceof Error ? error.message : 'Audio playback failed.'
       );
     }
   }
   async start() {
     if (this.active || this.closing || this.disposed) return;
     this.warning = undefined;
-    this.status({ state: 'requesting permission' });
+    this.status({state: 'requesting permission'});
     const input: ActiveInput = {
       id: crypto.randomUUID(),
       queue: [],
@@ -114,18 +132,18 @@ export class VoiceSession {
       inFlight: 0,
       ready: false,
       capture: new MicrophoneCapture(
-        (data) => this.enqueue(input, data),
+        data => this.enqueue(input, data),
         () =>
           this.fail(
             input,
-            new Error('Microphone disconnected. Please start again.'),
-          ),
+            new Error('Microphone disconnected. Please start again.')
+          )
       ),
     };
     this.active = input;
     // Both AudioContexts are resumed from the user's Start gesture.
     void this.enableAudio();
-    const capture = input.capture.start().then((started) => {
+    const capture = input.capture.start().then(started => {
       if (started && this.active === input && !input.ready)
         this.status({
           state: 'connecting voice',
@@ -134,7 +152,7 @@ export class VoiceSession {
       return started;
     });
     const server = this.connection
-      .startAudio({ streamId: input.id, format: AUDIO_FORMAT })
+      .startAudio({streamId: input.id, format: AUDIO_FORMAT})
       .then(() => {
         if (this.active !== input) {
           void this.connection.stopAudio(input.id, true).catch(() => undefined);
@@ -161,7 +179,7 @@ export class VoiceSession {
     if (input.bytes > MAX_PENDING_INPUT_BYTES) {
       this.fail(
         input,
-        new Error('Audio connection fell behind. Please start again.'),
+        new Error('Audio connection fell behind. Please start again.')
       );
       return;
     }
@@ -198,7 +216,7 @@ export class VoiceSession {
         state: this.stopping ? 'stopping' : 'streaming',
         chunksSent: input.acknowledged,
         microphoneName: input.capture.microphoneName,
-        ...(this.warning ? { warning: this.warning } : {}),
+        ...(this.warning ? {warning: this.warning} : {}),
       });
     } catch (error) {
       this.fail(input, error);
@@ -212,7 +230,7 @@ export class VoiceSession {
     const input = this.active;
     if (!input || this.stopping) return;
     this.stopping = true;
-    this.status({ state: 'stopping', chunksSent: input.acknowledged });
+    this.status({state: 'stopping', chunksSent: input.acknowledged});
     this.playback.clear();
     this.active = undefined;
     input.capture.dispose();
@@ -220,7 +238,7 @@ export class VoiceSession {
     try {
       await this.connection.stopAudio(input.id, true);
       if (!this.active && !this.disposed)
-        this.status({ state: 'idle', chunksSent: input.acknowledged });
+        this.status({state: 'idle', chunksSent: input.acknowledged});
     } catch (error) {
       if (!this.active && !this.disposed)
         this.status({
@@ -264,7 +282,11 @@ export class VoiceSession {
     if (!this.closing) return;
     this.closing = false;
     this.playback.clear();
-    if (!this.disposed) this.status({ state: 'idle' });
+    if (!this.disposed)
+      this.status({
+        state: 'idle',
+        ...(this.warning ? {warning: this.warning} : {}),
+      });
   }
   disconnect() {
     const wasActive = !!this.active || this.closing;

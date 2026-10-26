@@ -1,5 +1,5 @@
-import type { VoiceRoomSession } from '@living-community-assistant/types';
-import { startSocket } from './socket';
+import type {VoiceRoomSession} from '@living-community-assistant/types';
+import {startSocket} from './socket';
 const mocks = vi.hoisted(() => ({
   options: {} as {
     auth: (callback: (value: unknown) => void) => Promise<void>;
@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   handlers: {} as Record<string, (value?: unknown) => void>,
   manager: {} as Record<
     string,
-    (error?: Error & { data?: { code?: string } }) => void
+    (error?: Error & {data?: {code?: string}}) => void
   >,
   token: vi.fn(),
   session: vi.fn(),
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
     disconnect: vi.fn(),
     removeAllListeners: vi.fn(),
     on: vi.fn(),
-    io: { on: vi.fn(), removeAllListeners: vi.fn() },
+    io: {on: vi.fn(), removeAllListeners: vi.fn()},
   },
 }));
 vi.mock('./session', () => ({
@@ -43,8 +43,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.socket.connected = true;
   mocks.socket.timeout.mockReturnValue(mocks.socket);
-  mocks.socket.emitWithAck.mockResolvedValue({ ok: true });
-  mocks.session.mockResolvedValue({ getIdToken: mocks.token });
+  mocks.socket.emitWithAck.mockResolvedValue({ok: true});
+  mocks.session.mockResolvedValue({getIdToken: mocks.token});
   mocks.token.mockResolvedValue('id-token');
 });
 it('supplies a token and reflects connection and reconnect events', async () => {
@@ -52,22 +52,22 @@ it('supplies a token and reflects connection and reconnect events', async () => 
   const stop = startSocket(status);
   const callback = vi.fn();
   await mocks.options.auth(callback);
-  expect(callback).toHaveBeenCalledWith({ token: 'id-token' });
+  expect(callback).toHaveBeenCalledWith({token: 'id-token'});
   mocks.handlers.connect();
-  expect(status).toHaveBeenLastCalledWith({ state: 'connecting' });
-  const session: VoiceRoomSession = { roomId: 'room-one' };
+  expect(status).toHaveBeenLastCalledWith({state: 'connecting'});
+  const session: VoiceRoomSession = {roomId: 'room-one'};
   mocks.handlers['voice:session:ready'](session);
-  expect(status).toHaveBeenLastCalledWith({ state: 'connected', session });
+  expect(status).toHaveBeenLastCalledWith({state: 'connected', session});
   mocks.handlers.disconnect();
-  expect(status).toHaveBeenLastCalledWith({ state: 'disconnected' });
+  expect(status).toHaveBeenLastCalledWith({state: 'disconnected'});
   mocks.handlers.connect();
-  mocks.handlers['voice:session:ready']({ roomId: 'room-two' });
+  mocks.handlers['voice:session:ready']({roomId: 'room-two'});
   expect(status).toHaveBeenLastCalledWith({
     state: 'connected',
-    session: { roomId: 'room-two' },
+    session: {roomId: 'room-two'},
   });
   mocks.manager.reconnect_attempt();
-  expect(status).toHaveBeenLastCalledWith({ state: 'connecting' });
+  expect(status).toHaveBeenLastCalledWith({state: 'connecting'});
   stop();
   expect(mocks.socket.disconnect).toHaveBeenCalled();
   expect(mocks.socket.removeAllListeners).toHaveBeenCalled();
@@ -76,7 +76,7 @@ it('refreshes once after rejection, then reports an auth failure', async () => {
   const status = vi.fn();
   const stop = startSocket(status);
   const error = Object.assign(new Error('rejected'), {
-    data: { code: 'UNAUTHENTICATED' },
+    data: {code: 'UNAUTHENTICATED'},
   });
   mocks.handlers.connect_error(error);
   await mocks.options.auth(vi.fn());
@@ -106,10 +106,10 @@ it('reports sign-in failure and prevents pending work from connecting after clea
 it('bounds audio acknowledgements and prevents offline buffering', async () => {
   const connection = startSocket(vi.fn());
   await expect(connection.stopAudio('s')).rejects.toThrow('disconnected');
-  mocks.handlers['voice:session:ready']({ roomId: 'room' });
+  mocks.handlers['voice:session:ready']({roomId: 'room'});
   await connection.startAudio({
     streamId: 's',
-    format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
+    format: {encoding: 'pcm16le', sampleRate: 24000, channels: 1},
   });
   expect(mocks.socket.timeout).toHaveBeenCalledWith(12000);
   await connection.sendAudio({
@@ -130,7 +130,7 @@ it('bounds audio acknowledgements and prevents offline buffering', async () => {
       streamId: 's',
       sequence: 1,
       data: new Uint8Array(2),
-    }),
+    })
   ).rejects.toThrow('disconnected');
   connection();
 });
@@ -140,7 +140,7 @@ it('ignores session readiness after disposal', () => {
   const close = startSocket(status);
   close();
   status.mockClear();
-  mocks.handlers['voice:session:ready']({ roomId: 'late' });
+  mocks.handlers['voice:session:ready']({roomId: 'late'});
   expect(status).not.toHaveBeenCalled();
 });
 
@@ -156,7 +156,7 @@ it('delivers transcripts only for a ready connection and removes subscriptions',
   const unsubscribe = connection.onTranscript(listener);
   mocks.handlers['transcript:update'](update);
   expect(listener).not.toHaveBeenCalled();
-  mocks.handlers['voice:session:ready']({ roomId: 'room' });
+  mocks.handlers['voice:session:ready']({roomId: 'room'});
   mocks.handlers['transcript:update'](update);
   expect(listener).toHaveBeenCalledWith(update);
   unsubscribe();
@@ -172,17 +172,37 @@ it('delivers transcripts only for a ready connection and removes subscriptions',
 });
 
 it('does not retry forbidden connections and signs out to restore the password gate', async () => {
-  const { lockApp } = await import('./session');
+  const {lockApp} = await import('./session');
   const status = vi.fn();
   startSocket(status);
   await Promise.resolve();
   mocks.socket.connect.mockClear();
   mocks.handlers.connect_error(
     Object.assign(new Error('Password required'), {
-      data: { code: 'FORBIDDEN' },
-    }),
+      data: {code: 'FORBIDDEN'},
+    })
   );
   expect(mocks.socket.disconnect).toHaveBeenCalled();
   expect(mocks.socket.connect).not.toHaveBeenCalled();
   expect(lockApp).toHaveBeenCalledOnce();
+});
+
+it('filters safety warnings by current call and ignores disposed connections', () => {
+  const connection = startSocket(vi.fn());
+  const receive = vi.fn();
+  connection.onAudio(receive);
+  mocks.handlers['voice:session:ready']({roomId: 'room'});
+  mocks.handlers['call:status']({callId: 'current', state: 'active'});
+  const warning = {
+    code: 'PROMPT_INJECTION_DETECTED',
+    callId: 'old',
+    message: 'Stopped',
+  };
+  mocks.handlers['voice:session:warning'](warning);
+  expect(receive).not.toHaveBeenCalled();
+  mocks.handlers['voice:session:warning']({...warning, callId: 'current'});
+  expect(receive).toHaveBeenCalledOnce();
+  connection();
+  mocks.handlers['voice:session:warning']({...warning, callId: 'current'});
+  expect(receive).toHaveBeenCalledOnce();
 });

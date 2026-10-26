@@ -63,3 +63,9 @@ Production services use the same Firebase project. Remove emulator host variable
 - `libs/shared/types`: shared contracts; `tools` and `terraform`: development and deployment helpers.
 
 See [Sophie behavior and prompt publication](docs/sophie-agent.md) for the current conversation rules.
+
+### Voice injection checks
+
+Production socket-server calls check each nonempty final user transcription with OpenAI Decisions (`gpt-6-luna`) using `OPENAI_API_KEY`; the API project must have access to this model. Set `INJECTION_THRESHOLD` (0–1, default `0.8`) and `DECISIONS_TIMEOUT_MS` (1–30000, default `2000`). Each check includes at most three preceding user utterances, with preceding context limited to 12,000 characters. The current utterance is preserved in full.
+
+A detected instruction attack immediately stops capture and playback and saves the call with `prompt_injection`. Decisions errors, timeouts (including queue time), and transcription failures stop it with `guardrail_unavailable`. The UI retains a warning until the next call. The socket remains connected. Checks are asynchronous: the voice assistant can respond or execute tools before the final transcript verdict. The threshold is an initial default that should be calibrated on labeled English/Spanish examples. Monitor `guardrail.verdict` latency/probability and `guardrail.failed` categories without transcript logging. Deploy the server and UI together.

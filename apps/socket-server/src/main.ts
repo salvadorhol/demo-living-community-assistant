@@ -1,36 +1,37 @@
-import { firebasePromptLoader } from './ai/prompt-store.ts';
-import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
-import { createFirebaseInvoker } from './ai/tools/firebase-invoker.ts';
-import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
-import { ConfigurationError } from './configuration-error.ts';
-import { createLogger } from './logger.ts';
-import { installFatalLogging, installShutdown } from './lifecycle.ts';
-import { initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { readConfig } from './config.ts';
-import { createSocketServer } from './server.ts';
-import { createTranscriptionSession } from './ai/openai/transcription-session.ts';
-import { createVoiceAgent } from './ai/create-agent.ts';
-import { ASSISTANT_PROFILE } from './ai/assistant-profile.ts';
-import { firebaseCallStore } from './calls/firebase-call-store.ts';
-import { createRealtimeVoice } from './ai/openai/realtime-session.ts';
+import {createInjectionGuardrail} from './ai/openai/injection-check.ts';
+import {firebasePromptLoader} from './ai/prompt-store.ts';
+import {createSophieTools, createContactLoader} from './ai/tools/sophie.ts';
+import {createFirebaseInvoker} from './ai/tools/firebase-invoker.ts';
+import {readFirebaseToolConfig} from './ai/tools/firebase-invoker.ts';
+import {ConfigurationError} from './configuration-error.ts';
+import {createLogger} from './logger.ts';
+import {installFatalLogging, installShutdown} from './lifecycle.ts';
+import {initializeApp} from 'firebase-admin/app';
+import {getAuth} from 'firebase-admin/auth';
+import {readConfig} from './config.ts';
+import {createSocketServer} from './server.ts';
+import {createTranscriptionSession} from './ai/openai/transcription-session.ts';
+import {createVoiceAgent} from './ai/create-agent.ts';
+import {ASSISTANT_PROFILE} from './ai/assistant-profile.ts';
+import {firebaseCallStore} from './calls/firebase-call-store.ts';
+import {createRealtimeVoice} from './ai/openai/realtime-session.ts';
 
 // A JSON fallback keeps invalid logging configuration visible.
 let logger;
 try {
   logger = createLogger();
 } catch (err) {
-  logger = createLogger({ LOG_FORMAT: 'json' });
+  logger = createLogger({LOG_FORMAT: 'json'});
   logger.fatal(
-    { event: 'process.configuration_failed', err },
-    'Invalid logging configuration',
+    {event: 'process.configuration_failed', err},
+    'Invalid logging configuration'
   );
   process.exit(1);
 }
 installFatalLogging(logger);
 logger.info(
-  { event: 'process.starting', nodeVersion: process.version },
-  'Socket server starting',
+  {event: 'process.starting', nodeVersion: process.version},
+  'Socket server starting'
 );
 try {
   const config = readConfig();
@@ -43,29 +44,31 @@ try {
   const loader = createContactLoader(invoke);
   const server = createSocketServer(
     config,
-    (token) => getAuth(firebase).verifyIdToken(token),
+    token => getAuth(firebase).verifyIdToken(token),
     createVoiceAgent({
       voice: createRealtimeVoice(undefined, undefined, {
         loadPrompt: firebasePromptLoader(firebase),
         maxOutputQueueMs: config.voiceOutputQueueMs,
-        tools: (uid) => createSophieTools(toolConfig, uid, { invoke, loader }),
-        prefetch: (uid) => {
+        tools: uid => createSophieTools(toolConfig, uid, {invoke, loader}),
+        prefetch: uid => {
           void loader.load(uid);
         },
       }),
-      transcription: (context) => createTranscriptionSession(context),
-      metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },
+      transcription: context => createTranscriptionSession(context),
+      metadata: {transcriptionModel: ASSISTANT_PROFILE.transcriptionModel},
     }),
     firebaseCallStore(firebase, config.storageBucket),
     config.maxCallMs,
     logger,
+    undefined,
+    createInjectionGuardrail({
+      threshold: config.injectionThreshold,
+      timeoutMs: config.decisionsTimeoutMs,
+    })
   );
   installShutdown(logger, server.close);
-  server.httpServer.on('error', (err) => {
-    logger.fatal(
-      { event: 'server.listen_failed', err },
-      'Socket server failed',
-    );
+  server.httpServer.on('error', err => {
+    logger.fatal({event: 'server.listen_failed', err}, 'Socket server failed');
     logger.flush();
     process.exit(1);
   });
@@ -82,9 +85,9 @@ try {
           'FIREBASE_AUTH_EMULATOR_HOST',
           'FIRESTORE_EMULATOR_HOST',
           'FIREBASE_STORAGE_EMULATOR_HOST',
-        ].filter((name) => Boolean(process.env[name])),
+        ].filter(name => Boolean(process.env[name])),
       },
-      'Socket server listening',
+      'Socket server listening'
     );
   });
 } catch (err) {
@@ -96,7 +99,7 @@ try {
           : 'process.start_failed',
       err,
     },
-    'Socket server startup failed',
+    'Socket server startup failed'
   );
   logger.flush();
   process.exit(1);

@@ -1,4 +1,4 @@
-import { io, type Socket } from 'socket.io-client';
+import {io, type Socket} from 'socket.io-client';
 import type {
   AudioAck,
   CallStatus,
@@ -12,7 +12,7 @@ import type {
   TranscriptUpdate,
 } from '@living-community-assistant/types';
 import environment from '#firebase-environment';
-import { ensureAuthorizedSession, lockApp } from './session';
+import {ensureAuthorizedSession, lockApp} from './session';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 export interface ConnectionStatus {
@@ -35,12 +35,12 @@ export interface SocketConnection {
 
 export function startSocket(
   onStatus: (status: ConnectionStatus) => void,
-  onCall: (status: CallStatus) => void = () => undefined,
+  onCall: (status: CallStatus) => void = () => undefined
 ): SocketConnection {
   const transcriptListeners = new Set<(update: TranscriptUpdate) => void>();
   const audioListeners = new Set<(event: AudioOutputEvent) => void>();
   const emitAudio = (event: AudioOutputEvent) =>
-    audioListeners.forEach((listener) => listener(event));
+    audioListeners.forEach(listener => listener(event));
   let disposed = false;
   let refreshed = false;
   let forceRefresh = false;
@@ -50,12 +50,12 @@ export function startSocket(
     environment.socketUrl,
     {
       autoConnect: false,
-      auth: async (callback) => {
+      auth: async callback => {
         try {
           const user = await ensureAuthorizedSession();
           const token = await user.getIdToken(forceRefresh);
           forceRefresh = false;
-          if (!disposed) callback({ token });
+          if (!disposed) callback({token});
         } catch {
           if (!disposed) {
             socket.disconnect();
@@ -66,73 +66,74 @@ export function startSocket(
           }
         }
       },
-    },
+    }
   );
-  socket.on('call:status', (value) => {
+  socket.on('call:status', value => {
     if (disposed || !socket.connected || !session) return;
     if (value.state === 'active' && callId !== value.callId)
       callId = value.callId;
     if (callId === value.callId) onCall(value);
   });
-  socket.on('call:closing', (value) => {
+  socket.on('call:closing', value => {
     if (!disposed && socket.connected && value.callId === callId)
-      emitAudio({ type: 'closing', ...value });
+      emitAudio({type: 'closing', ...value});
   });
-  socket.on('transcript:update', (update) => {
+  socket.on('transcript:update', update => {
     if (disposed || !socket.connected || !session) return;
     if (update.callId && update.callId !== callId) return;
-    transcriptListeners.forEach((listener) => listener(update));
+    transcriptListeners.forEach(listener => listener(update));
   });
-  socket.on('voice:session:error', (error) =>
-    emitAudio({ type: 'error', error }),
+  socket.on('voice:session:error', error => emitAudio({type: 'error', error}));
+  socket.on('voice:session:warning', warning => {
+    if (
+      disposed ||
+      !socket.connected ||
+      !session ||
+      ('callId' in warning && warning.callId !== callId)
+    )
+      return;
+    emitAudio({type: 'warning', warning});
+  });
+  socket.on('audio:output:start', stream => emitAudio({type: 'start', stream}));
+  socket.on('audio:output:chunk', chunk => emitAudio({type: 'chunk', chunk}));
+  socket.on('audio:output:end', ({streamId}) =>
+    emitAudio({type: 'end', streamId})
   );
-  socket.on('voice:session:warning', (warning) =>
-    emitAudio({ type: 'warning', warning }),
-  );
-  socket.on('audio:output:start', (stream) =>
-    emitAudio({ type: 'start', stream }),
-  );
-  socket.on('audio:output:chunk', (chunk) =>
-    emitAudio({ type: 'chunk', chunk }),
-  );
-  socket.on('audio:output:end', ({ streamId }) =>
-    emitAudio({ type: 'end', streamId }),
-  );
-  socket.on('audio:output:clear', ({ streamId }) =>
-    emitAudio({ type: 'clear', streamId }),
+  socket.on('audio:output:clear', ({streamId}) =>
+    emitAudio({type: 'clear', streamId})
   );
   socket.on('connect', () => {
     refreshed = false;
     session = undefined;
-    onStatus({ state: 'connecting' });
+    onStatus({state: 'connecting'});
   });
-  socket.on('voice:session:ready', (value) => {
+  socket.on('voice:session:ready', value => {
     if (disposed || !socket.connected) return;
     session = value;
-    onStatus({ state: 'connected', session });
+    onStatus({state: 'connected', session});
   });
   socket.on('disconnect', () => {
     session = undefined;
     callId = undefined;
-    onStatus({ state: 'disconnected' });
+    onStatus({state: 'disconnected'});
   });
-  socket.io.on('reconnect_attempt', () => onStatus({ state: 'connecting' }));
-  socket.on('connect_error', (error: Error & { data?: { code?: string } }) => {
+  socket.io.on('reconnect_attempt', () => onStatus({state: 'connecting'}));
+  socket.on('connect_error', (error: Error & {data?: {code?: string}}) => {
     if (error.data?.code === 'FORBIDDEN') {
       socket.disconnect();
-      onStatus({ state: 'disconnected', error: 'Password required.' });
+      onStatus({state: 'disconnected', error: 'Password required.'});
       void lockApp().catch(() =>
         onStatus({
           state: 'disconnected',
           error: 'Could not sign out. Please retry.',
-        }),
+        })
       );
       return;
     }
     if (error.data?.code === 'UNAUTHENTICATED' && !refreshed) {
       refreshed = true;
       forceRefresh = true;
-      onStatus({ state: 'connecting' });
+      onStatus({state: 'connecting'});
       socket.connect();
       return;
     }
@@ -144,7 +145,7 @@ export function startSocket(
           : 'Socket unavailable. Reconnecting automatically.',
     });
   });
-  onStatus({ state: 'connecting' });
+  onStatus({state: 'connecting'});
   void ensureAuthorizedSession().then(
     () => {
       if (!disposed) socket.connect();
@@ -155,7 +156,7 @@ export function startSocket(
           state: 'disconnected',
           error: 'Sign-in failed. Please retry.',
         });
-    },
+    }
   );
   const close = () => {
     disposed = true;
@@ -178,25 +179,23 @@ export function startSocket(
     async endCall() {
       connected();
       if (!callId) throw new Error('No active call.');
-      accepted(await socket.timeout(5000).emitWithAck('call:end', { callId }));
+      accepted(await socket.timeout(5000).emitWithAck('call:end', {callId}));
     },
     async retrySave() {
       connected();
       if (!callId) throw new Error('No failed call.');
-      accepted(
-        await socket.timeout(5000).emitWithAck('call:retry', { callId }),
-      );
+      accepted(await socket.timeout(5000).emitWithAck('call:retry', {callId}));
     },
     async startAudio(stream: AudioStream) {
       connected();
       accepted(
-        await socket.timeout(12000).emitWithAck('audio:input:start', stream),
+        await socket.timeout(12000).emitWithAck('audio:input:start', stream)
       );
     },
     async sendAudio(chunk: AudioChunk) {
       connected();
       accepted(
-        await socket.timeout(2000).emitWithAck('audio:input:chunk', chunk),
+        await socket.timeout(2000).emitWithAck('audio:input:chunk', chunk)
       );
     },
     async stopAudio(streamId: string, cancel = false) {
@@ -204,7 +203,7 @@ export function startSocket(
       accepted(
         await socket
           .timeout(2000)
-          .emitWithAck('audio:input:stop', { streamId, cancel }),
+          .emitWithAck('audio:input:stop', {streamId, cancel})
       );
     },
     reportPlayback(progress: AudioPlaybackProgress) {

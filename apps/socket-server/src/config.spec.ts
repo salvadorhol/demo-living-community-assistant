@@ -1,14 +1,16 @@
-import { readConfig } from './config.ts';
+import {readConfig} from './config.ts';
 
 describe('server configuration', () => {
   it('works without cloud credentials or an environment file', () => {
     expect(
-      readConfig({ FIREBASE_PROJECT_ID: 'demo-living-community-assistant' }),
+      readConfig({FIREBASE_PROJECT_ID: 'demo-living-community-assistant'})
     ).toEqual({
       firebaseProjectId: 'demo-living-community-assistant',
       storageBucket: 'demo-living-community-assistant-call-recordings',
       maxCallMs: 3600000,
       voiceOutputQueueMs: 60000,
+      injectionThreshold: 0.8,
+      decisionsTimeoutMs: 2000,
       host: '127.0.0.1',
       port: 3000,
       allowedOrigins: ['http://localhost:4200', 'http://127.0.0.1:4200'],
@@ -22,12 +24,14 @@ describe('server configuration', () => {
         HOST: '0.0.0.0',
         PORT: '4001',
         CORS_ORIGINS: 'https://example.com, http://localhost:4200 ',
-      }),
+      })
     ).toEqual({
       firebaseProjectId: 'demo-living-community-assistant',
       storageBucket: 'demo-living-community-assistant-call-recordings',
       maxCallMs: 3600000,
       voiceOutputQueueMs: 60000,
+      injectionThreshold: 0.8,
+      decisionsTimeoutMs: 2000,
       host: '0.0.0.0',
       port: 4001,
       allowedOrigins: ['https://example.com', 'http://localhost:4200'],
@@ -44,8 +48,8 @@ describe('server configuration', () => {
     ' 3000',
     '1e3',
     'Infinity',
-  ])('rejects invalid port %j', (value) =>
-    expect(() => readConfig({ PORT: value })).toThrow(/PORT/),
+  ])('rejects invalid port %j', value =>
+    expect(() => readConfig({PORT: value})).toThrow(/PORT/)
   );
 
   it.each([
@@ -56,12 +60,12 @@ describe('server configuration', () => {
     'https://user:password@example.com',
     '',
     ',',
-  ])('rejects invalid browser origin %j', (value) =>
-    expect(() => readConfig({ CORS_ORIGINS: value })).toThrow(/CORS_ORIGINS/),
+  ])('rejects invalid browser origin %j', value =>
+    expect(() => readConfig({CORS_ORIGINS: value})).toThrow(/CORS_ORIGINS/)
   );
 
   it('rejects an empty host', () =>
-    expect(() => readConfig({ HOST: ' ' })).toThrow(/HOST/));
+    expect(() => readConfig({HOST: ' '})).toThrow(/HOST/));
 });
 
 it('requires an explicit Firebase project', () =>
@@ -69,15 +73,26 @@ it('requires an explicit Firebase project', () =>
 
 it.each(['', '0', '-1', '999', '120001', 'NaN', '3.5'])(
   'rejects invalid output queue configuration %j as a configuration error',
-  (value) => {
+  value => {
     expect(() =>
-      readConfig({ FIREBASE_PROJECT_ID: 'demo', VOICE_OUTPUT_QUEUE_MS: value }),
+      readConfig({FIREBASE_PROJECT_ID: 'demo', VOICE_OUTPUT_QUEUE_MS: value})
     ).toThrow(/VOICE_OUTPUT_QUEUE_MS/);
-  },
+  }
 );
 it('accepts an explicit output queue duration', () => {
   expect(
-    readConfig({ FIREBASE_PROJECT_ID: 'demo', VOICE_OUTPUT_QUEUE_MS: '90000' })
-      .voiceOutputQueueMs,
+    readConfig({FIREBASE_PROJECT_ID: 'demo', VOICE_OUTPUT_QUEUE_MS: '90000'})
+      .voiceOutputQueueMs
   ).toBe(90000);
+});
+
+it.each(['-1', '1.1', 'NaN'])('rejects injection threshold %s', value => {
+  expect(() =>
+    readConfig({FIREBASE_PROJECT_ID: 'demo', INJECTION_THRESHOLD: value})
+  ).toThrow(/INJECTION_THRESHOLD/);
+});
+it.each(['0', '-1', '30001', 'NaN'])('rejects Decisions timeout %s', value => {
+  expect(() =>
+    readConfig({FIREBASE_PROJECT_ID: 'demo', DECISIONS_TIMEOUT_MS: value})
+  ).toThrow(/DECISIONS_TIMEOUT_MS/);
 });

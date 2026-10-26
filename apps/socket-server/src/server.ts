@@ -1,10 +1,11 @@
-import { silentLogger, type AppLogger } from './logger.ts';
-import type { DecodedIdToken } from 'firebase-admin/auth';
-import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import type {InjectionGuardrail} from './ai/openai/injection-check.ts';
+import {silentLogger, type AppLogger} from './logger.ts';
+import type {DecodedIdToken} from 'firebase-admin/auth';
+import {createServer} from 'node:http';
+import {randomUUID} from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
-import { Server } from 'socket.io';
+import {Server} from 'socket.io';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -15,14 +16,14 @@ import {
   echoAudio,
   type AudioSessionFactory,
 } from './transport/audio.ts';
-import type { CallStore } from './calls/call-store.ts';
-import { attachConversation } from './transport/socket-conversation.ts';
-import type { VoiceAgentFactory } from './ai/contracts.ts';
-import type { TranscriptObserverFactory } from './conversation/transcript-observer.ts';
-import type { ServerConfig } from './config.ts';
+import type {CallStore} from './calls/call-store.ts';
+import {attachConversation} from './transport/socket-conversation.ts';
+import type {VoiceAgentFactory} from './ai/contracts.ts';
+import type {TranscriptObserverFactory} from './conversation/transcript-observer.ts';
+import type {ServerConfig} from './config.ts';
 
 function health(): HealthResponse {
-  return { status: 'ok', time: Date.now() };
+  return {status: 'ok', time: Date.now()};
 }
 
 export function createSocketServer(
@@ -33,10 +34,11 @@ export function createSocketServer(
   maxCallMs?: number,
   logger: AppLogger = silentLogger,
   observerFactory?: TranscriptObserverFactory,
+  guardrail?: InjectionGuardrail
 ) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(cors({ origin: config.allowedOrigins }));
+  app.use(cors({origin: config.allowedOrigins}));
   app.get('/health', (_request, response) => response.json(health()));
 
   const httpServer = createServer(app);
@@ -44,15 +46,15 @@ export function createSocketServer(
     ClientToServerEvents,
     ServerToClientEvents,
     Record<string, never>,
-    { uid: string; authProvider?: string; authTime?: number }
+    {uid: string; authProvider?: string; authTime?: number}
   >(httpServer, {
-    cors: { origin: config.allowedOrigins },
+    cors: {origin: config.allowedOrigins},
     // CORS alone does not restrict WebSocket upgrades.
     allowRequest: (request, callback) => {
       const origin = request.headers.origin;
       callback(
         null,
-        origin === undefined || config.allowedOrigins.includes(origin),
+        origin === undefined || config.allowedOrigins.includes(origin)
       );
     },
   });
@@ -60,13 +62,13 @@ export function createSocketServer(
     const token: unknown = socket.handshake.auth.token;
     if (typeof token !== 'string' || !token.trim()) {
       logger.warn(
-        { event: 'socket.authentication_missing', socketId: socket.id },
-        'Socket authentication required',
+        {event: 'socket.authentication_missing', socketId: socket.id},
+        'Socket authentication required'
       );
       next(
         Object.assign(new Error('Authentication required.'), {
-          data: { code: 'UNAUTHENTICATED' },
-        }),
+          data: {code: 'UNAUTHENTICATED'},
+        })
       );
       return;
     }
@@ -74,13 +76,13 @@ export function createSocketServer(
       const decoded = await verifyToken(token);
       if (decoded.appAccess !== true) {
         logger.warn(
-          { event: 'socket.access_denied', socketId: socket.id },
-          'Password authorization required',
+          {event: 'socket.access_denied', socketId: socket.id},
+          'Password authorization required'
         );
         next(
           Object.assign(new Error('Password authorization required.'), {
-            data: { code: 'FORBIDDEN' },
-          }),
+            data: {code: 'FORBIDDEN'},
+          })
         );
         return;
       }
@@ -91,43 +93,43 @@ export function createSocketServer(
       next();
     } catch (err) {
       logger.warn(
-        { event: 'socket.authentication_failed', err, socketId: socket.id },
-        'Socket authentication failed',
+        {event: 'socket.authentication_failed', err, socketId: socket.id},
+        'Socket authentication failed'
       );
       next(
         Object.assign(new Error('Authentication failed.'), {
-          data: { code: 'UNAUTHENTICATED' },
-        }),
+          data: {code: 'UNAUTHENTICATED'},
+        })
       );
     }
   });
   const finishers = new Set<() => Promise<void>>();
-  const rooms = new Map<string, { roomId: string; members: Set<string> }>();
-  io.engine.on('connection_error', (err) =>
+  const rooms = new Map<string, {roomId: string; members: Set<string>}>();
+  io.engine.on('connection_error', err =>
     logger.warn(
-      { event: 'socket.transport_failed', code: err.code },
-      'Socket transport failed',
-    ),
+      {event: 'socket.transport_failed', code: err.code},
+      'Socket transport failed'
+    )
   );
-  io.on('connection', (socket) => {
-    const log = logger.child({ socketId: socket.id });
-    log.info({ event: 'socket.connected' }, 'Socket connected');
-    socket.on('error', (err) =>
-      log.error({ event: 'socket.error', err }, 'Socket error'),
+  io.on('connection', socket => {
+    const log = logger.child({socketId: socket.id});
+    log.info({event: 'socket.connected'}, 'Socket connected');
+    socket.on('error', err =>
+      log.error({event: 'socket.error', err}, 'Socket error')
     );
     const uid = socket.data.uid;
     if (typeof audioFactory !== 'function') audioFactory.prefetch?.(uid);
     let room = rooms.get(uid);
     if (!room) {
-      room = { roomId: randomUUID(), members: new Set() };
+      room = {roomId: randomUUID(), members: new Set()};
       rooms.set(uid, room);
     }
     const session = room;
     session.members.add(socket.id);
-    socket.once('disconnect', (reason) => {
+    socket.once('disconnect', reason => {
       log.info(
-        { event: 'socket.disconnected', reason, roomId: session.roomId },
-        'Socket disconnected',
+        {event: 'socket.disconnected', reason, roomId: session.roomId},
+        'Socket disconnected'
       );
       session.members.delete(socket.id);
       if (!session.members.size && rooms.get(uid) === session)
@@ -145,35 +147,36 @@ export function createSocketServer(
           authProvider: socket.data.authProvider ?? 'unknown',
           ...(socket.data.authTime === undefined
             ? {}
-            : { authTime: socket.data.authTime }),
+            : {authTime: socket.data.authTime}),
         },
-        log.child({ roomId: session.roomId }),
+        log.child({roomId: session.roomId}),
         observerFactory,
+        guardrail
       );
       finishers.add(finish);
       socket.once('disconnect', () => {
         void finish()
-          .catch((err) =>
+          .catch(err =>
             log.error(
-              { event: 'call.finalization_failed', err },
-              'Disconnect finalization failed',
-            ),
+              {event: 'call.finalization_failed', err},
+              'Disconnect finalization failed'
+            )
           )
           .finally(() => finishers.delete(finish));
       });
     }
     socket.emit('health:status', health());
-    socket.on('health:check', (acknowledge) => {
+    socket.on('health:check', acknowledge => {
       if (typeof acknowledge === 'function') acknowledge(health());
     });
     void Promise.resolve()
       .then(() => socket.join(session.roomId))
       .then(() => {
         if (socket.connected)
-          socket.emit('voice:session:ready', { roomId: session.roomId });
+          socket.emit('voice:session:ready', {roomId: session.roomId});
       })
-      .catch((err) => {
-        log.error({ event: 'socket.room_failed', err }, 'Room setup failed');
+      .catch(err => {
+        log.error({event: 'socket.room_failed', err}, 'Room setup failed');
         socket.disconnect(true);
       });
   });
@@ -186,12 +189,12 @@ export function createSocketServer(
     close: () =>
       (closing ??= (async () => {
         logger.info(
-          { event: 'server.finalizing', pendingCalls: finishers.size },
-          'Finalizing active calls',
+          {event: 'server.finalizing', pendingCalls: finishers.size},
+          'Finalizing active calls'
         );
-        await Promise.all([...finishers].map((finish) => finish()));
+        await Promise.all([...finishers].map(finish => finish()));
         await new Promise<void>((resolve, reject) => {
-          io.close((error) => {
+          io.close(error => {
             if (
               error &&
               (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'

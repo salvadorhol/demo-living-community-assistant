@@ -1,3 +1,4 @@
+import type {InjectionGuardrail} from '../ai/openai/injection-check.ts';
 import type {
   AudioOutputEvent,
   AudioPlaybackProgress,
@@ -8,10 +9,10 @@ import type {
   CallStatus,
   TranscriptUpdate,
 } from '@living-community-assistant/types';
-import type { VoiceAgentFactory } from '../ai/contracts.ts';
-import type { CallStore } from '../calls/call-store.ts';
-import type { AppLogger } from '../logger.ts';
-import type { TranscriptObserverFactory } from './transcript-observer.ts';
+import type {VoiceAgentFactory} from '../ai/contracts.ts';
+import type {CallStore} from '../calls/call-store.ts';
+import type {AppLogger} from '../logger.ts';
+import type {TranscriptObserverFactory} from './transcript-observer.ts';
 
 export interface ConversationEvents {
   output(event: AudioOutputEvent): void;
@@ -28,6 +29,7 @@ export interface ConversationOptions {
   logger?: AppLogger;
   events: ConversationEvents;
   observerFactory?: TranscriptObserverFactory;
+  guardrail?: InjectionGuardrail;
 }
 export interface ConversationSession {
   start(stream: AudioStream): Promise<AudioAck>;

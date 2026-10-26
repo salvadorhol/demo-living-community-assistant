@@ -1,4 +1,4 @@
-import { ConfigurationError } from './configuration-error.ts';
+import {ConfigurationError} from './configuration-error.ts';
 export interface ServerConfig {
   firebaseProjectId: string;
   storageBucket?: string;
@@ -7,14 +7,18 @@ export interface ServerConfig {
   host: string;
   port: number;
   allowedOrigins: string[];
+  injectionThreshold?: number;
+  decisionsTimeoutMs?: number;
 }
 
 export function readConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = process.env
 ): ServerConfig & {
   storageBucket: string;
   maxCallMs: number;
   voiceOutputQueueMs: number;
+  injectionThreshold: number;
+  decisionsTimeoutMs: number;
 } {
   const rawPort = env.PORT ?? '3000';
   const port = Number(rawPort);
@@ -25,7 +29,7 @@ export function readConfig(
     port > 65535
   ) {
     throw new ConfigurationError(
-      'PORT must be an integer between 1 and 65535.',
+      'PORT must be an integer between 1 and 65535.'
     );
   }
   const host = env.HOST?.trim() ?? '127.0.0.1';
@@ -34,11 +38,11 @@ export function readConfig(
     env.CORS_ORIGINS ?? 'http://localhost:4200,http://127.0.0.1:4200'
   )
     .split(',')
-    .map((origin) => origin.trim())
+    .map(origin => origin.trim())
     .filter(Boolean);
   if (!allowedOrigins.length)
     throw new ConfigurationError(
-      'CORS_ORIGINS must contain at least one browser origin.',
+      'CORS_ORIGINS must contain at least one browser origin.'
     );
   for (const origin of allowedOrigins) {
     let url: URL;
@@ -46,12 +50,12 @@ export function readConfig(
       url = new URL(origin);
     } catch {
       throw new ConfigurationError(
-        'CORS_ORIGINS must contain complete HTTP(S) origins.',
+        'CORS_ORIGINS must contain complete HTTP(S) origins.'
       );
     }
     if (!['http:', 'https:'].includes(url.protocol) || url.origin !== origin) {
       throw new ConfigurationError(
-        'CORS_ORIGINS must contain complete HTTP(S) origins without paths or wildcards.',
+        'CORS_ORIGINS must contain complete HTTP(S) origins without paths or wildcards.'
       );
     }
   }
@@ -70,9 +74,29 @@ export function readConfig(
     maxCallMs > 3600000
   )
     throw new ConfigurationError(
-      'MAX_CALL_MS must be between 1000 and 3600000.',
+      'MAX_CALL_MS must be between 1000 and 3600000.'
+    );
+  const injectionThreshold = Number(env.INJECTION_THRESHOLD ?? 0.8);
+  const decisionsTimeoutMs = Number(env.DECISIONS_TIMEOUT_MS ?? 2000);
+  if (
+    !Number.isFinite(injectionThreshold) ||
+    injectionThreshold < 0 ||
+    injectionThreshold > 1
+  )
+    throw new ConfigurationError(
+      'INJECTION_THRESHOLD must be between 0 and 1.'
+    );
+  if (
+    !Number.isSafeInteger(decisionsTimeoutMs) ||
+    decisionsTimeoutMs < 1 ||
+    decisionsTimeoutMs > 30000
+  )
+    throw new ConfigurationError(
+      'DECISIONS_TIMEOUT_MS must be between 1 and 30000.'
     );
   return {
+    injectionThreshold,
+    decisionsTimeoutMs,
     host,
     port,
     allowedOrigins,
@@ -94,12 +118,12 @@ export function readOpenAIKey(env: NodeJS.ProcessEnv = process.env) {
 }
 
 export function readOutputQueueMs(
-  value: string | number = VOICE_LIMITS.maxOutputQueueMs,
+  value: string | number = VOICE_LIMITS.maxOutputQueueMs
 ): number {
   const duration = Number(value);
   if (!Number.isSafeInteger(duration) || duration < 1000 || duration > 120_000)
     throw new ConfigurationError(
-      'VOICE_OUTPUT_QUEUE_MS must be an integer between 1000 and 120000.',
+      'VOICE_OUTPUT_QUEUE_MS must be an integer between 1000 and 120000.'
     );
   return duration;
 }

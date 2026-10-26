@@ -17,24 +17,24 @@ export interface CallStatus {
 
 export interface ClientToServerEvents {
   'call:end': (
-    value: { callId: string },
-    ack: (result: AudioAck) => void,
+    value: {callId: string},
+    ack: (result: AudioAck) => void
   ) => void;
   'call:retry': (
-    value: { callId: string },
-    ack: (result: AudioAck) => void,
+    value: {callId: string},
+    ack: (result: AudioAck) => void
   ) => void;
   'audio:input:start': (
     stream: AudioStream,
-    ack: (result: AudioAck) => void,
+    ack: (result: AudioAck) => void
   ) => void;
   'audio:input:chunk': (
     chunk: AudioChunk,
-    ack: (result: AudioAck) => void,
+    ack: (result: AudioAck) => void
   ) => void;
   'audio:input:stop': (
-    stream: AudioStreamEnd & { cancel?: boolean },
-    ack: (result: AudioAck) => void,
+    stream: AudioStreamEnd & {cancel?: boolean},
+    ack: (result: AudioAck) => void
   ) => void;
   'audio:playback:progress': (progress: AudioPlaybackProgress) => void;
   'health:check': (acknowledge: (response: HealthResponse) => void) => void;
@@ -58,11 +58,15 @@ export interface TranscriptUpdate {
 }
 
 export type CallEndReason =
-  'demo_sales_handoff' | 'visitor_requested' | 'conversation_complete';
+  | 'demo_sales_handoff'
+  | 'visitor_requested'
+  | 'conversation_complete'
+  | 'prompt_injection'
+  | 'guardrail_unavailable';
 
 export interface ServerToClientEvents {
   'call:status': (status: CallStatus) => void;
-  'call:closing': (value: { callId: string; reason: CallEndReason }) => void;
+  'call:closing': (value: {callId: string; reason: CallEndReason}) => void;
   'transcript:update': (update: TranscriptUpdate) => void;
   'voice:session:error': (error: VoiceSessionError) => void;
   'voice:session:warning': (warning: VoiceSessionWarning) => void;
@@ -98,15 +102,15 @@ export type AudioErrorCode =
   | 'AUDIO_FAILED'
   | 'VOICE_CONFIGURATION_ERROR';
 export type AudioAck =
-  { ok: true } | { ok: false; code: AudioErrorCode; message: string };
+  {ok: true} | {ok: false; code: AudioErrorCode; message: string};
 export type AudioOutputEvent =
-  | { type: 'closing'; callId: string; reason: CallEndReason }
-  | { type: 'start'; stream: AudioStream }
-  | { type: 'chunk'; chunk: AudioChunk }
-  | { type: 'end'; streamId: string }
-  | { type: 'clear'; streamId: string }
-  | { type: 'error'; error: VoiceSessionError }
-  | { type: 'warning'; warning: VoiceSessionWarning };
+  | {type: 'closing'; callId: string; reason: CallEndReason}
+  | {type: 'start'; stream: AudioStream}
+  | {type: 'chunk'; chunk: AudioChunk}
+  | {type: 'end'; streamId: string}
+  | {type: 'clear'; streamId: string}
+  | {type: 'error'; error: VoiceSessionError}
+  | {type: 'warning'; warning: VoiceSessionWarning};
 
 export interface AudioPlaybackProgress {
   streamId: string;
@@ -118,10 +122,13 @@ export interface VoiceSessionError {
   message: string;
 }
 
-export interface VoiceSessionWarning {
-  code: 'VOICE_OUTPUT_LIMIT';
-  message: string;
-}
+export type VoiceSessionWarning =
+  | {code: 'VOICE_OUTPUT_LIMIT'; message: string}
+  | {
+      code: 'PROMPT_INJECTION_DETECTED' | 'GUARDRAIL_UNAVAILABLE';
+      callId: string;
+      message: string;
+    };
 
 /** Availability lookups do not create bookings. */
 export interface AvailableAppointmentsResponse {

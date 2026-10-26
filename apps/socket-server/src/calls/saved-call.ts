@@ -1,11 +1,11 @@
-import { silentLogger, type AppLogger } from '../logger.ts';
-import { randomUUID } from 'node:crypto';
+import {silentLogger, type AppLogger} from '../logger.ts';
+import {randomUUID} from 'node:crypto';
 import type {
   CallStatus,
   TranscriptUpdate,
 } from '@living-community-assistant/types';
-import { CallRecording } from './recording.ts';
-import { retry, type CallStore } from './call-store.ts';
+import {CallRecording} from './recording.ts';
+import {retry, type CallStore} from './call-store.ts';
 
 export class SavedCall {
   readonly id = randomUUID();
@@ -34,9 +34,9 @@ export class SavedCall {
     emit: (status: CallStatus) => void,
     transcript: (value: TranscriptUpdate) => void,
     logger: AppLogger = silentLogger,
-    modelMetadata: Readonly<Record<string, string>> = {},
+    modelMetadata: Readonly<Record<string, string>> = {}
   ) {
-    this.logger = logger.child({ callId: this.id, component: 'call' });
+    this.logger = logger.child({callId: this.id, component: 'call'});
     this.models = modelMetadata;
     this.uid = uid;
     this.store = store;
@@ -46,30 +46,30 @@ export class SavedCall {
 
   private enqueue(
     operation: () => Promise<unknown>,
-    operationName = 'checkpoint',
+    operationName = 'checkpoint'
   ) {
     this.queue = this.queue
       .catch(() => undefined)
       .then(() => this.retry(operationName, operation));
     // Surface persistence failures on finalization, without unhandled background rejections.
-    void this.queue.catch((err) =>
+    void this.queue.catch(err =>
       this.logger.error(
         {
           event: 'persistence.checkpoint_failed',
           err,
           operation: operationName,
         },
-        'Call checkpoint failed',
-      ),
+        'Call checkpoint failed'
+      )
     );
     return this.queue;
   }
   private retry<T>(operation: string, action: () => Promise<T>) {
     return retry(action, (err, attempt) =>
       this.logger.warn(
-        { event: 'persistence.retry', operation, attempt, err },
-        'Retrying call persistence',
-      ),
+        {event: 'persistence.retry', operation, attempt, err},
+        'Retrying call persistence'
+      )
     );
   }
   async start(roomId: string, authentication: Record<string, unknown> = {}) {
@@ -83,9 +83,9 @@ export class SavedCall {
           ...this.models,
           startedAt: new Date().toISOString(),
         }),
-      'start',
+      'start'
     );
-    this.logger.info({ event: 'call.started', roomId }, 'Call started');
+    this.logger.info({event: 'call.started', roomId}, 'Call started');
     this.notify('active');
   }
   private notify(state: CallStatus['state'], message?: string) {
@@ -94,14 +94,16 @@ export class SavedCall {
       callId: this.id,
       state,
       transcription: this.transcription,
-      ...(message ? { message } : {}),
+      ...(message ? {message} : {}),
       ...(this.closed &&
       [
         'demo_sales_handoff',
         'visitor_requested',
         'conversation_complete',
+        'prompt_injection',
+        'guardrail_unavailable',
       ].includes(this.reason)
-        ? { endReason: this.reason }
+        ? {endReason: this.reason}
         : {}),
     });
   }
@@ -109,20 +111,20 @@ export class SavedCall {
     if (this.closed) return;
     const state = paused ? 'paused' : 'active';
     this.logger.info(
-      { event: paused ? 'call.paused' : 'call.resumed' },
-      paused ? 'Call paused' : 'Call resumed',
+      {event: paused ? 'call.paused' : 'call.resumed'},
+      paused ? 'Call paused' : 'Call resumed'
     );
     this.notify(paused ? 'paused' : 'active');
     void this.enqueue(
-      async () => this.store?.update(this.uid, this.id, { status: state }),
-      'status',
+      async () => this.store?.update(this.uid, this.id, {status: state}),
+      'status'
     );
   }
   metadata(info: Record<string, string>) {
     if (!this.closed)
       void this.enqueue(
         async () => this.store?.update(this.uid, this.id, info),
-        'metadata',
+        'metadata'
       );
   }
   degraded() {
@@ -131,14 +133,14 @@ export class SavedCall {
     this.transcription = 'degraded';
     this.notify(
       this.state,
-      'Live transcription is unavailable; audio recording continues.',
+      'Live transcription is unavailable; audio recording continues.'
     );
     void this.enqueue(
       async () =>
         this.store?.update(this.uid, this.id, {
           transcriptionStatus: 'degraded',
         }),
-      'transcription-status',
+      'transcription-status'
     );
   }
   update(value: TranscriptUpdate) {
@@ -159,7 +161,7 @@ export class SavedCall {
       this.checkpoints.set(value.id, now);
       void this.enqueue(
         async () => this.store?.transcript(this.uid, this.id, update),
-        'transcript',
+        'transcript'
       );
     }
   }
@@ -176,7 +178,7 @@ export class SavedCall {
     if (!this.closed) {
       for (const entry of this.entries.values()) {
         if (!entry.isFinal)
-          this.update({ ...entry, incomplete: true, isFinal: true });
+          this.update({...entry, incomplete: true, isFinal: true});
       }
       this.closed = true;
     }
@@ -199,26 +201,26 @@ export class SavedCall {
             endedAt: this.endedAt,
             endReason: this.reason,
             transcriptionStatus: this.transcription,
-          }),
+          })
         );
         for (const entry of this.entries.values())
           await this.retry('transcript', () =>
-            store.transcript(this.uid, this.id, entry),
+            store.transcript(this.uid, this.id, entry)
           );
         this.recordingReference ??= await this.retry('upload', () =>
           store.upload(
             this.uid,
             this.id,
             this.recording.path,
-            this.recording.durationMs,
-          ),
+            this.recording.durationMs
+          )
         );
         await this.retry('update', () =>
           store.update(this.uid, this.id, {
             status: 'ended',
             recordingStatus: 'saved',
             recording: this.recordingReference,
-          }),
+          })
         );
       }
       this.logger.info(
@@ -227,19 +229,19 @@ export class SavedCall {
           durationMs: this.recording.durationMs,
           bytes: this.recordingReference?.bytes,
         },
-        'Call saved',
+        'Call saved'
       );
       this.notify('saved');
       clearTimeout(this.cleanupTimer);
       this.recording.cleanup();
     } catch (err) {
       this.logger.error(
-        { event: 'call.save_failed', err },
-        'Call could not be saved',
+        {event: 'call.save_failed', err},
+        'Call could not be saved'
       );
       this.notify(
         'failed',
-        'Call could not be saved. Retry save while this server is running.',
+        'Call could not be saved. Retry save while this server is running.'
       );
       await this.store
         ?.update(this.uid, this.id, {
@@ -248,16 +250,16 @@ export class SavedCall {
           endReason: this.reason,
           endedAt: this.endedAt,
         })
-        .catch((err) =>
+        .catch(err =>
           this.logger.error(
-            { event: 'persistence.failure_status_failed', err },
-            'Could not persist save failure status',
-          ),
+            {event: 'persistence.failure_status_failed', err},
+            'Could not persist save failure status'
+          )
         );
       // Bound retention of temporary artifacts after repeated failures.
       this.cleanupTimer ??= setTimeout(
         () => this.recording.cleanup(),
-        60 * 60 * 1000,
+        60 * 60 * 1000
       );
       this.cleanupTimer.unref();
     }

@@ -1,28 +1,29 @@
-import type { Socket } from 'socket.io';
+import type {InjectionGuardrail} from '../ai/openai/injection-check.ts';
+import type {Socket} from 'socket.io';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
   AudioAck,
 } from '@living-community-assistant/types';
-import type { VoiceAgentFactory } from '../ai/contracts.ts';
-import type { CallStore } from '../calls/call-store.ts';
-import { silentLogger, type AppLogger } from '../logger.ts';
-import { createConversationSession } from '../conversation/session.ts';
-import type { TranscriptObserverFactory } from '../conversation/transcript-observer.ts';
-import { validFormat } from './audio.ts';
+import type {VoiceAgentFactory} from '../ai/contracts.ts';
+import type {CallStore} from '../calls/call-store.ts';
+import {silentLogger, type AppLogger} from '../logger.ts';
+import {createConversationSession} from '../conversation/session.ts';
+import type {TranscriptObserverFactory} from '../conversation/transcript-observer.ts';
+import {validFormat} from './audio.ts';
 
 type VoiceSocket = Socket<
   ClientToServerEvents,
   ServerToClientEvents,
   Record<string, never>,
-  { uid: string }
+  {uid: string}
 >;
 const validId = (id: unknown): id is string =>
   typeof id === 'string' && id.length > 0 && id.length <= 128;
 const invalid = (
   message: string,
-  code: 'INVALID_AUDIO' | 'INVALID_STREAM' = 'INVALID_AUDIO',
-): AudioAck => ({ ok: false, code, message });
+  code: 'INVALID_AUDIO' | 'INVALID_STREAM' = 'INVALID_AUDIO'
+): AudioAck => ({ok: false, code, message});
 /** Translate untrusted wire commands into a transport-independent conversation. */
 export function attachConversation(
   socket: VoiceSocket,
@@ -33,6 +34,7 @@ export function attachConversation(
   authentication: Record<string, unknown> = {},
   logger: AppLogger = silentLogger,
   observerFactory?: TranscriptObserverFactory,
+  guardrail?: InjectionGuardrail
 ) {
   const session = createConversationSession({
     uid: socket.data.uid,
@@ -43,11 +45,12 @@ export function attachConversation(
     maxCallMs,
     logger,
     observerFactory,
+    guardrail,
     events: {
-      status: (value) => {
+      status: value => {
         if (socket.connected) socket.emit('call:status', value);
       },
-      transcript: (value) => {
+      transcript: value => {
         if (socket.connected) socket.emit('transcript:update', value);
       },
       output(event) {
@@ -66,10 +69,10 @@ export function attachConversation(
             socket.emit('audio:output:chunk', event.chunk);
             break;
           case 'end':
-            socket.emit('audio:output:end', { streamId: event.streamId });
+            socket.emit('audio:output:end', {streamId: event.streamId});
             break;
           case 'clear':
-            socket.emit('audio:output:clear', { streamId: event.streamId });
+            socket.emit('audio:output:clear', {streamId: event.streamId});
             break;
           case 'error':
             socket.emit('voice:session:error', event.error);
@@ -88,10 +91,10 @@ export function attachConversation(
     void session
       .start(value)
       .then(ack)
-      .catch((err) => {
+      .catch(err => {
         logger.error(
-          { event: 'conversation.command_failed', err },
-          'Start command failed',
+          {event: 'conversation.command_failed', err},
+          'Start command failed'
         );
         ack({
           ok: false,
@@ -119,10 +122,10 @@ export function attachConversation(
     ack(
       validId(value?.streamId)
         ? session.pause(value)
-        : invalid('No matching input stream.', 'INVALID_STREAM'),
+        : invalid('No matching input stream.', 'INVALID_STREAM')
     );
   });
-  socket.on('audio:playback:progress', (value) => {
+  socket.on('audio:playback:progress', value => {
     if (
       validId(value?.streamId) &&
       Number.isFinite(value.playedMs) &&
@@ -135,7 +138,7 @@ export function attachConversation(
       ack(
         validId(value?.callId)
           ? session.end(value.callId)
-          : invalid('No matching call.', 'INVALID_STREAM'),
+          : invalid('No matching call.', 'INVALID_STREAM')
       );
   });
   socket.on('call:retry', (value, ack) => {
@@ -143,18 +146,18 @@ export function attachConversation(
       ack(
         validId(value?.callId)
           ? session.retrySave(value.callId)
-          : invalid('No matching failed call.', 'INVALID_STREAM'),
+          : invalid('No matching failed call.', 'INVALID_STREAM')
       );
   });
   // One owner finalizes a disconnect; server shutdown owns session.close().
   socket.once('disconnect', () => {
     void session
       .disconnect()
-      .catch((err) =>
+      .catch(err =>
         logger.error(
-          { event: 'call.finalization_failed', err },
-          'Disconnect finalization failed',
-        ),
+          {event: 'call.finalization_failed', err},
+          'Disconnect finalization failed'
+        )
       );
   });
   return () => session.close();
