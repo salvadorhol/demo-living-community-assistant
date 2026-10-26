@@ -159,6 +159,9 @@ export function Workspace() {
       <header className={styles['header']}>
         <h1>Living Community Assistant</h1>
         <div className={styles['connection']}>
+          <a className={styles['textButton']} href="/admin">
+            Admin
+          </a>
           <button
             className={styles['textButton']}
             onClick={() => {
