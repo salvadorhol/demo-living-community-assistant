@@ -26,6 +26,9 @@ const baseURL = process.env['BASE_URL'] || webServerAddress;
  */
 export default defineConfig({
   ...nxE2EPreset(import.meta.dirname, { testDir: './src' }),
+  // Admin tests edit the same demo configuration used by voice tests.
+  workers: 1,
+  fullyParallel: false,
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     baseURL,

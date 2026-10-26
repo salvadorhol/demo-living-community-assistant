@@ -369,3 +369,27 @@ it('shows configuration errors and releases the microphone', async () => {
   expect(mocks.dispose).toHaveBeenCalled();
   voice.dispose();
 });
+
+it('releases capture for demo handoff without cutting off closing playback', async () => {
+  const { voice, connection, status } = setup();
+  await voice.start();
+  const receive = connection.onAudio.mock.calls[0][0];
+  receive({ type: 'closing', callId: 'call', reason: 'demo_sales_handoff' });
+  expect(mocks.dispose).toHaveBeenCalled();
+  expect(mocks.playbackClear).not.toHaveBeenCalled();
+  expect(connection.stopAudio).not.toHaveBeenCalled();
+  expect(status).toHaveBeenLastCalledWith({ state: 'closing' });
+  receive({
+    type: 'start',
+    stream: {
+      streamId: 'closing-audio',
+      format: { encoding: 'pcm16le', sampleRate: 24000, channels: 1 },
+    },
+  });
+  expect(mocks.playbackHandle).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'start' }),
+  );
+  voice.finishClosing();
+  expect(status).toHaveBeenLastCalledWith({ state: 'idle' });
+  voice.dispose();
+});

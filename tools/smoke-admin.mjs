@@ -1,3 +1,4 @@
+import { APPOINTMENTS_PATH } from '@living-community-assistant/types/appointments';
 import assert from 'node:assert/strict';
 import { initializeApp, deleteApp } from 'firebase/app';
 import {
@@ -44,6 +45,8 @@ const app = initializeApp({ projectId, apiKey: 'demo-api-key' }, 'admin-smoke');
 const admin = initializeAdmin({ projectId }, 'admin-smoke-trusted');
 const trusted = adminFirestore(admin).doc(SOPHIE_PROMPT_PATH);
 const original = (await trusted.get()).data();
+const trustedAppointments = adminFirestore(admin).doc(APPOINTMENTS_PATH);
+const originalAppointments = (await trustedAppointments.get()).data();
 const auth = getAuth(app);
 const db = getFirestore(app);
 const functions = getFunctions(app, 'us-central1');
@@ -55,6 +58,7 @@ const denied = (operation) =>
   assert.rejects(operation, (error) => error.code === 'permission-denied');
 try {
   await denied(getDocFromServer(reference));
+  await denied(getDocFromServer(doc(db, APPOINTMENTS_PATH)));
   const unlockAdmin = httpsCallable(functions, 'unlockAdmin');
   await assert.rejects(
     unlockAdmin({ password: TEST_ACCESS_PASSWORD }),
@@ -72,6 +76,7 @@ try {
     true,
   );
   await denied(getDocFromServer(reference));
+  await denied(getDocFromServer(doc(db, APPOINTMENTS_PATH)));
   await denied(setDoc(reference, { content: 'unauthorized' }));
   await signOut(auth);
   const token = (await unlockAdmin({ password: TEST_ADMIN_PASSWORD })).data
@@ -80,6 +85,67 @@ try {
   const claims = (await user.getIdTokenResult(true)).claims;
   assert.equal(claims.admin, true);
   assert.equal(claims.appAccess, true);
+  const appointmentsRef = doc(db, APPOINTMENTS_PATH);
+  const appointments = (await getDocFromServer(appointmentsRef)).data();
+  const validAppointments = {
+    slots: appointments.slots,
+    revision: appointments.revision + 1,
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  };
+  await setDoc(appointmentsRef, validAppointments);
+  for (const patch of [
+    { slots: {} },
+    { slots: Array(21).fill({ date: '2099-01-01', time: '10:00' }) },
+    { revision: validAppointments.revision },
+    { updatedBy: 'forged' },
+    { updatedAt: new Date(0) },
+    { extra: true },
+  ]) {
+    await denied(
+      setDoc(appointmentsRef, {
+        ...validAppointments,
+        revision: validAppointments.revision + 1,
+        ...patch,
+      }),
+    );
+  }
+  await denied(deleteDoc(appointmentsRef));
+  await trustedAppointments.delete();
+  await denied(setDoc(appointmentsRef, { ...validAppointments, revision: 2 }));
+  await setDoc(appointmentsRef, {
+    ...validAppointments,
+    revision: 1,
+    slots: [],
+  });
+  const empty = await fetch(
+    `http://127.0.0.1:5101/${projectId}/us-central1/getAvailableAppointments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    },
+  );
+  assert.deepEqual((await empty.json()).appointments, []);
+  await trustedAppointments.set({
+    slots: [{ date: 'not-a-date', time: '10:00' }],
+    revision: 2,
+    updatedAt: new Date(),
+    updatedBy: 'test',
+  });
+  const invalid = await fetch(
+    `http://127.0.0.1:5101/${projectId}/us-central1/getAvailableAppointments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    },
+  );
+  assert.equal(
+    invalid.status,
+    503,
+    'Invalid configuration must fail instead of returning invented availability',
+  );
   const initial = (await getDocFromServer(reference)).data();
   const valid = {
     content: 'Private edited prompt\nSecond line',
@@ -123,6 +189,7 @@ try {
   );
 } finally {
   if (original) await trusted.set(original);
+  if (originalAppointments) await trustedAppointments.set(originalAppointments);
   await terminate(db);
   await deleteApp(app);
   await deleteAdmin(admin);

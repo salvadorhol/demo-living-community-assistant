@@ -189,10 +189,11 @@ it.each([undefined, false, true])(
         if (name === 'getAvailableAppointments')
           return {
             timeZone: 'America/New_York',
-            requestedDate: '2099-11-02',
+
             appointments: [
               {
                 id: 'offered',
+                date: '2099-11-02',
                 startsAt: '2099-11-02T14:00:00Z',
                 durationMinutes: 30,
               },
@@ -203,10 +204,7 @@ it.each([undefined, false, true])(
     );
     const registry = createSophieTools(config, 'owner', { invoke });
     await registry.bootstrap?.(context.signal);
-    await registry.execute(
-      call('get_available_appointments', { date: '2099-11-02' }),
-      context,
-    );
+    await registry.execute(call('get_available_appointments', {}), context);
     expect(
       await registry.execute(
         call('prepare_follow_up_request', { kind: 'tour', slotId: 'invented' }),
@@ -306,4 +304,42 @@ it('keeps save actions in the response tool snapshot and recovers an unsaved fol
     ),
   ).toMatchObject({ ok: true });
   expect(await registry.execute(request, context)).toMatchObject({ ok: true });
+});
+
+it('offers appointments immediately and gates demo handoff on a successful lookup', async () => {
+  const registry = createSophieTools(config, 'owner', {
+    invoke: async () => ({ timeZone: 'America/New_York', appointments: [] }),
+  });
+  expect(registry.toolChoice?.()).toBe('auto');
+  expect(
+    await registry.execute(
+      call('simulate_sales_handoff', { language: 'en' }),
+      context,
+    ),
+  ).toMatchObject({ ok: false });
+  expect(
+    await registry.execute(call('get_available_appointments', {}), context),
+  ).toMatchObject({ ok: true });
+  expect(
+    await registry.execute(
+      call('simulate_sales_handoff', { language: 'en' }),
+      context,
+    ),
+  ).toMatchObject({ ok: true, result: { simulated: true, endingCall: true } });
+  expect(registry.closingMessage?.()).toContain('For this demo');
+  expect(registry.definitions).toEqual([]);
+  expect(
+    await registry.execute(call('get_contact_information', {}), context),
+  ).toMatchObject({ ok: false });
+});
+it('never offers simulated handoff after a failed availability lookup', async () => {
+  const registry = createSophieTools(config, 'owner', {
+    invoke: async () => {
+      throw new Error('offline');
+    },
+  });
+  await registry.execute(call('get_available_appointments', {}), context);
+  expect(registry.definitions.map((t) => t.name)).not.toContain(
+    'simulate_sales_handoff',
+  );
 });

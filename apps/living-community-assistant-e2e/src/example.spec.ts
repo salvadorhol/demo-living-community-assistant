@@ -115,9 +115,6 @@ test('streams microphone audio to the authenticated server and releases capture 
       .first(),
   ).toBeVisible({ timeout: 20_000 });
   await expect(
-    page.getByText(/No sales director is available/).first(),
-  ).toBeVisible();
-  await expect(
     page.getByText(/Available tour slots: \d{4}-\d{2}-\d{2}T/).first(),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Pause' }).click();
@@ -333,4 +330,105 @@ test('an ordinary app session cannot open the prompt editor', async ({
     page.getByRole('heading', { name: 'Enter the admin password' }),
   ).toBeVisible();
   await expect(page.getByLabel('Sophie’s prompt')).toHaveCount(0);
+});
+
+test('edits appointment JSON and completes a disclosed sales handoff after playback', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(
+    browserName !== 'chromium',
+    'Fake microphone hardware is configured for Chromium.',
+  );
+  await page.context().grantPermissions(['microphone']);
+  await page.goto('/admin');
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-admin-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  const editor = page.getByLabel('Appointments JSON');
+  await expect(editor).toBeVisible();
+  const original = await editor.inputValue();
+  await editor.fill('{');
+  await expect(
+    page.getByRole('button', { name: 'Save appointments', exact: true }),
+  ).toBeDisabled();
+  await editor.fill('[]');
+  await page
+    .getByRole('button', { name: 'Save appointments', exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      'Appointments saved. The next lookup will use these options.',
+    ),
+  ).toBeVisible();
+  const visitor = await page.context().newPage();
+  try {
+    await visitor.addInitScript(() => {
+      const getUserMedia = navigator.mediaDevices.getUserMedia.bind(
+        navigator.mediaDevices,
+      );
+      navigator.mediaDevices.getUserMedia = async (constraints) => {
+        const stream = await getUserMedia(constraints);
+        (
+          globalThis as typeof globalThis & {
+            handoffTracks: MediaStreamTrack[];
+          }
+        ).handoffTracks = stream.getTracks();
+        return stream;
+      };
+    });
+    await visitor.goto('/');
+    await expect(
+      visitor.getByRole('status', { name: 'Socket connection status' }),
+    ).toHaveText('Socket on');
+    await visitor
+      .getByRole('button', { name: 'Start session', exact: true })
+      .click();
+    await expect(
+      visitor.getByText(/For this demo, I will simulate connecting you/),
+    ).toBeVisible({ timeout: 15000 });
+    await expect(
+      visitor.getByRole('status', { name: 'Call status' }),
+    ).toHaveText('Demo transfer complete. Call ended and saved.', {
+      timeout: 20000,
+    });
+    expect(
+      await visitor.evaluate(() =>
+        (
+          globalThis as typeof globalThis & {
+            handoffTracks: MediaStreamTrack[];
+          }
+        ).handoffTracks.every((track) => track.readyState === 'ended'),
+      ),
+    ).toBe(true);
+    const user = await storedUser(visitor);
+    const response = await visitor.request.get(
+      `http://127.0.0.1:8380/v1/projects/demo-living-community-assistant/databases/(default)/documents/sessions/${user!.uid}/calls`,
+      {
+        headers: {
+          Authorization: `Bearer ${user!.stsTokenManager.accessToken}`,
+        },
+      },
+    );
+    expect(response.ok()).toBe(true);
+    const calls = await response.json();
+    expect(
+      calls.documents.some(
+        (call: { fields: { endReason?: { stringValue: string } } }) =>
+          call.fields.endReason?.stringValue === 'demo_sales_handoff',
+      ),
+    ).toBe(true);
+  } finally {
+    await visitor.close();
+    await editor.fill(original);
+    await page
+      .getByRole('button', { name: 'Save appointments', exact: true })
+      .click();
+    await expect(
+      page.getByText(
+        'Appointments saved. The next lookup will use these options.',
+      ),
+    ).toBeVisible();
+  }
 });

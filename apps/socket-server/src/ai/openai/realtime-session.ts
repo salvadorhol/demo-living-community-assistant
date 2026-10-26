@@ -49,6 +49,8 @@ export function createRealtimeVoice(
       metadata,
       speechStarted,
       responseStarted,
+      closing: closingStarted,
+      closingResponseDone,
       logger = silentLogger,
     }) {
       const registry =
@@ -57,6 +59,7 @@ export function createRealtimeVoice(
           : options.tools;
       let instructions = '';
       let promptTimer: ReturnType<typeof setTimeout> | undefined;
+      let closing = false;
       let greeted = false;
       let log = logger.child({ component: 'openai-voice' });
       const texts = new Map<string, ProviderTranscript>();
@@ -86,10 +89,24 @@ export function createRealtimeVoice(
         callId,
         logger: () => log,
         canContinue: () =>
-          listening && !disposed && !responseId && !controlPending,
+          listening && !closing && !disposed && !responseId && !controlPending,
         send,
         fail,
         toolsChanged: updateTools,
+        onClosing() {
+          if (closing) return;
+          closing = true;
+          send({
+            type: 'session.update',
+            session: {
+              type: 'realtime',
+              tools: [],
+              tool_choice: 'none',
+              audio: { input: { turn_detection: null } },
+            },
+          });
+          closingStarted?.();
+        },
       });
       function updateTools() {
         if (!ready || disposed || !registry?.toolChoice) return;
@@ -222,6 +239,7 @@ export function createRealtimeVoice(
             break;
           }
           case 'input_audio_buffer.speech_stopped':
+            if (closing) break;
             registry?.onUserTurn?.();
             updateTools();
             turnEnded?.();
@@ -260,6 +278,7 @@ export function createRealtimeVoice(
             break;
           }
           case 'input_audio_buffer.speech_started':
+            if (closing) break;
             tools.invalidate(true);
             invalidateControl();
             speechStarted?.();
@@ -304,7 +323,8 @@ export function createRealtimeVoice(
                   }
                 ).status_details?.error?.code,
               });
-            if (owned) tools.complete(response);
+            if (owned && closing) closingResponseDone?.();
+            else if (owned) tools.complete(response);
             if (cancelled.size > 128)
               cancelled.delete(cancelled.values().next().value as string);
             break;
@@ -330,6 +350,7 @@ export function createRealtimeVoice(
           disposed ||
           !listening ||
           signal.aborted ||
+          closing ||
           controlPending ||
           activeResponseId() !== target
         )
@@ -593,6 +614,7 @@ export function createRealtimeVoice(
           }
         },
         write(data) {
+          if (closing) return;
           if (!listening) throw new Error('Microphone paused');
           send({
             type: 'input_audio_buffer.append',

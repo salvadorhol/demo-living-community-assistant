@@ -53,6 +53,12 @@ export function attachConversation(
       output(event) {
         if (!socket.connected) return;
         switch (event.type) {
+          case 'closing':
+            socket.emit('call:closing', {
+              callId: event.callId,
+              reason: event.reason,
+            });
+            break;
           case 'start':
             socket.emit('audio:output:start', event.stream);
             break;

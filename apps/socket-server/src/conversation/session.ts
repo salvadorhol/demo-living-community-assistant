@@ -45,13 +45,14 @@ export function createConversationSession({
   function validTarget(target: ResponseTarget) {
     const valid = Boolean(
       !closed &&
-        !ending &&
-        input?.ready &&
-        call?.id === target.callId &&
-        generation === target.generation &&
-        activity === target.activity &&
-        target.responseId &&
-        agent?.currentResponseId?.() === target.responseId,
+      !ending &&
+      !closing &&
+      input?.ready &&
+      call?.id === target.callId &&
+      generation === target.generation &&
+      activity === target.activity &&
+      target.responseId &&
+      agent?.currentResponseId?.() === target.responseId,
     );
     if (!valid)
       logger.debug(
@@ -125,6 +126,25 @@ export function createConversationSession({
   let agent: VoiceAgent | undefined;
   let generation = 0;
   let call: SavedCall | undefined;
+  let closing:
+    | {
+        streamId?: string;
+        bytes: number;
+        playedMs: number;
+        delivered: boolean;
+        generated: boolean;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+  function finishClosingIfPlayed() {
+    if (
+      closing?.generated &&
+      closing.delivered &&
+      closing.bytes > 0 &&
+      closing.playedMs >= Math.floor(closing.bytes / 48)
+    )
+      endBackground('demo_sales_handoff');
+  }
   let ending: Promise<void> | undefined;
   let limit: ReturnType<typeof setTimeout> | undefined;
   let initializing = false;
@@ -143,6 +163,11 @@ export function createConversationSession({
     if (ending) return ending;
     const current = call;
     if (!current) return;
+    if (closing) {
+      reason = 'demo_sales_handoff';
+      clearTimeout(closing.timer);
+      closing = undefined;
+    }
     clearTimeout(limit);
     invalidateObservation();
     observation?.dispose();
@@ -217,11 +242,24 @@ export function createConversationSession({
   }
   function output(event: AudioOutputEvent, owner: number) {
     if (owner !== generation) return;
+    if (closing) {
+      if (event.type === 'start') {
+        closing.streamId = event.stream.streamId;
+        closing.bytes = 0;
+        closing.playedMs = 0;
+        closing.delivered = false;
+      }
+      if (event.type === 'chunk' && event.chunk.streamId === closing.streamId)
+        closing.bytes += event.chunk.data.byteLength;
+      if (event.type === 'end' && event.streamId === closing.streamId)
+        closing.delivered = true;
+    }
     if (event.type === 'clear') call?.recording.clear(event.streamId);
     if (!connected()) return;
     if (event.type === 'chunk')
       call?.recording.append(event.chunk.streamId, event.chunk.data);
     events.output(event);
+    if (event.type === 'end') finishClosingIfPlayed();
     if (event.type === 'error') endBackground('provider_error');
   }
   return {
@@ -231,6 +269,7 @@ export function createConversationSession({
         !connected() ||
         input ||
         ending ||
+        closing ||
         initializing ||
         retained.size >= 3
       ) {
@@ -286,6 +325,36 @@ export function createConversationSession({
             callId: current.id,
             logger: logger.child({ callId: current.id }),
             transcript: (value) => acceptTranscript(value, owner),
+            closing() {
+              if (owner !== generation || !call || closing || ending) return;
+              invalidateObservation();
+              closing = {
+                bytes: 0,
+                playedMs: 0,
+                delivered: false,
+                generated: false,
+                timer: setTimeout(
+                  () => endBackground('demo_sales_handoff'),
+                  15000,
+                ),
+              };
+              closing.timer.unref();
+              events.output({
+                type: 'closing',
+                callId: call.id,
+                reason: 'demo_sales_handoff',
+              });
+              events.status({
+                callId: call.id,
+                state: 'closing',
+                endReason: 'demo_sales_handoff',
+              });
+            },
+            closingResponseDone() {
+              if (owner !== generation || !closing) return;
+              closing.generated = true;
+              finishClosingIfPlayed();
+            },
             speechStarted: () => {
               if (owner === generation) invalidateObservation();
             },
@@ -345,6 +414,7 @@ export function createConversationSession({
       }
     },
     write(value: AudioChunk): AudioAck {
+      if (closing && value?.streamId === input?.id) return { ok: true };
       if (!input?.ready || !value || value.streamId !== input.id) {
         return {
           ok: false,
@@ -380,6 +450,7 @@ export function createConversationSession({
       }
     },
     pause(value: AudioStreamEnd): AudioAck {
+      if (closing && value?.streamId === input?.id) return { ok: true };
       if (!input || value?.streamId !== input.id) {
         return {
           ok: false,
@@ -409,6 +480,17 @@ export function createConversationSession({
       try {
         agent?.progress(value);
         call?.recording.progress(value.streamId, value.playedMs);
+        if (
+          closing &&
+          value.streamId === closing.streamId &&
+          !value.cleared &&
+          Number.isFinite(value.playedMs) &&
+          value.playedMs >= closing.playedMs &&
+          value.playedMs <= closing.bytes / 48
+        ) {
+          closing.playedMs = value.playedMs;
+          finishClosingIfPlayed();
+        }
       } catch (err) {
         logger.error(
           { event: 'conversation.operation_failed', err, callId: call?.id },

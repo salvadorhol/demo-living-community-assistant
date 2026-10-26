@@ -30,6 +30,7 @@ export function createToolRegistry(
     bootstrap?(signal: AbortSignal): Promise<void>;
     onUserTurn?(): void;
     greeting?(): string;
+    closingMessage?(): string | undefined;
     toolChoice?(): 'auto' | { type: 'function'; name: string };
   } = {},
 ) {
@@ -54,6 +55,7 @@ export function createToolRegistry(
     ...lifecycle,
     isWrite: (name: string) => entries.get(name)?.write === true,
     get definitions() {
+      if (lifecycle.closingMessage?.()) return [];
       return definitions
         .filter((entry) => !entry.enabled || entry.enabled())
         .map(({ name, description, parameters }) => ({
@@ -79,7 +81,11 @@ export function createToolRegistry(
       try {
         signal.throwIfAborted();
         const definition = entries.get(call.name);
-        if (!definition || (definition.enabled && !definition.enabled()))
+        if (
+          lifecycle.closingMessage?.() ||
+          !definition ||
+          (definition.enabled && !definition.enabled())
+        )
           throw new ToolError('UNKNOWN_TOOL', 'That tool is not available.');
         if (Buffer.byteLength(call.arguments) > TOOL_LIMITS.maxArgumentBytes)
           throw new ToolError(

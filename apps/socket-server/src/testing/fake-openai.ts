@@ -91,10 +91,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
           type: 'function_call',
           call_id: `${id}-${index}`,
           name,
-          arguments:
-            name === 'get_available_appointments'
-              ? JSON.stringify({ date: 'next Monday' })
-              : '{}',
+          arguments: '{}',
         }));
         socket.send(
           JSON.stringify({ type: 'response.created', response: { id } }),
@@ -175,18 +172,57 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
                 type: 'function_call',
                 call_id: `${id}-${index}`,
                 name,
-                arguments:
-                  name === 'get_available_appointments'
-                    ? JSON.stringify({ date: 'next Monday' })
-                    : '{}',
+                arguments: '{}',
               })),
             },
           }),
         );
         return;
       }
+      const closingDisclosure =
+        typeof event.response?.instructions === 'string' &&
+        event.response.instructions.startsWith(
+          'Speak exactly this JSON string as the closing demo disclosure.',
+        );
       if (
-        active &&
+        options.toolCalls &&
+        event.type === 'response.create' &&
+        !closingDisclosure &&
+        toolNames.includes('simulate_sales_handoff') &&
+        [...results.values()].some(
+          (value) =>
+            Array.isArray(value.result?.appointments) &&
+            value.result.appointments.length === 0,
+        )
+      ) {
+        const id = `fixture-handoff-${++turn}`;
+        socket.send(
+          JSON.stringify({
+            type: 'response.created',
+            response: { id, metadata: event.response?.metadata },
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            type: 'response.done',
+            response: {
+              id,
+              status: 'completed',
+              output: [
+                {
+                  type: 'function_call',
+                  call_id: `${id}-handoff`,
+                  name: 'simulate_sales_handoff',
+                  arguments: JSON.stringify({ language: 'en' }),
+                },
+              ],
+            },
+          }),
+        );
+        return;
+      }
+      if (
+        (active || closingDisclosure) &&
         ((event.type === 'input_audio_buffer.append' && !responded) ||
           event.type === 'response.create')
       ) {
@@ -211,7 +247,13 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
               event.response.instructions.split('\n').at(-1),
             ) as string)
           : undefined;
+        const closingText = closingDisclosure
+          ? (JSON.parse(
+              event.response.instructions.split('\n').at(-1),
+            ) as string)
+          : undefined;
         const text =
+          closingText ??
           greeting ??
           'Hello! How can I help?' +
             (options.toolCalls

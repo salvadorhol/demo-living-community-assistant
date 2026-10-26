@@ -74,6 +74,10 @@ export function startSocket(
       callId = value.callId;
     if (callId === value.callId) onCall(value);
   });
+  socket.on('call:closing', (value) => {
+    if (!disposed && socket.connected && value.callId === callId)
+      emitAudio({ type: 'closing', ...value });
+  });
   socket.on('transcript:update', (update) => {
     if (disposed || !socket.connected || !session) return;
     if (update.callId && update.callId !== callId) return;

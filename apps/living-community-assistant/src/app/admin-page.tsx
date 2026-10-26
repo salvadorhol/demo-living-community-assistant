@@ -8,6 +8,7 @@ import {
 import { loadPrompt, savePrompt } from './api/prompt';
 import { lockApp } from './api/session';
 import styles from './app.module.scss';
+import { AppointmentsEditor } from './appointments-editor';
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -18,7 +19,10 @@ export function AdminPage() {
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  const dirty = saved !== undefined && draft !== (saved?.content ?? '');
+  const [appointmentsDirty, setAppointmentsDirty] = useState(false);
+  const [appointmentsBusy, setAppointmentsBusy] = useState(false);
+  const promptDirty = saved !== undefined && draft !== (saved?.content ?? '');
+  const dirty = promptDirty || appointmentsDirty;
   const blocker = useBlocker(dirty && !busy);
   useEffect(() => {
     if (blocker.state !== 'blocked') return;
@@ -64,7 +68,7 @@ export function AdminPage() {
         <h1>Sophie prompt administration</h1>
         <div className={styles['connection']}>
           <button
-            disabled={busy}
+            disabled={busy || appointmentsBusy}
             onClick={() => {
               navigate('/');
             }}
@@ -72,7 +76,7 @@ export function AdminPage() {
             Open assistant
           </button>
           <button
-            disabled={busy}
+            disabled={busy || appointmentsBusy}
             onClick={() => {
               if (discardAllowed())
                 void lockApp().catch(() =>
@@ -108,7 +112,7 @@ export function AdminPage() {
             className={styles['promptEditor']}
             onSubmit={(event) => {
               event.preventDefault();
-              if (busy || !dirty || !validPromptContent(draft)) return;
+              if (busy || !promptDirty || !validPromptContent(draft)) return;
               setBusy(true);
               setError(undefined);
               setMessage(undefined);
@@ -140,7 +144,7 @@ export function AdminPage() {
               rows={24}
               maxLength={MAX_PROMPT_LENGTH}
               value={draft}
-              disabled={busy}
+              disabled={busy || appointmentsBusy}
               onChange={(event) => setDraft(event.target.value)}
             />
             <p>
@@ -150,15 +154,18 @@ export function AdminPage() {
             <div>
               <button
                 type="submit"
-                disabled={busy || !dirty || !validPromptContent(draft)}
+                disabled={busy || !promptDirty || !validPromptContent(draft)}
               >
                 {busy ? 'Saving…' : 'Save prompt'}
               </button>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || appointmentsBusy}
                 onClick={() => {
-                  if (discardAllowed()) {
+                  if (
+                    !promptDirty ||
+                    window.confirm('Discard your unsaved prompt changes?')
+                  ) {
                     setMessage(undefined);
                     setAttempt((value) => value + 1);
                   }
@@ -170,6 +177,10 @@ export function AdminPage() {
           </form>
         </>
       )}
+      <AppointmentsEditor
+        onDirty={setAppointmentsDirty}
+        onBusy={setAppointmentsBusy}
+      />
       {message && <p role="status">{message}</p>}
       {error && <p role="alert">{error}</p>}
     </main>

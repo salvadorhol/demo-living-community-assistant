@@ -14,6 +14,7 @@ export interface VoiceStatus {
     | 'requesting permission'
     | 'connecting voice'
     | 'streaming'
+    | 'closing'
     | 'stopping'
     | 'error';
   error?: string;
@@ -32,6 +33,7 @@ interface ActiveInput {
   ready: boolean;
 }
 export class VoiceSession {
+  private closing = false;
   private warning?: string;
   private active?: ActiveInput;
   private disposed = false;
@@ -50,6 +52,17 @@ export class VoiceSession {
       (progress) => connection.reportPlayback(progress),
     );
     this.unsubscribe = connection.onAudio((event) => {
+      if (event.type === 'closing') {
+        this.closing = true;
+        const input = this.active;
+        this.active = undefined;
+        if (input) {
+          input.capture.dispose();
+          input.queue = [];
+        }
+        this.status({ state: 'closing' });
+        return;
+      }
       if (event.type === 'warning') {
         if (!this.active) return;
         this.warning = event.warning.message;
@@ -67,7 +80,12 @@ export class VoiceSession {
           this.playback.clear();
           this.status({ state: 'error', error: event.error.message });
         }
-      } else if (this.active || event.type === 'clear' || event.type === 'end')
+      } else if (
+        this.active ||
+        this.closing ||
+        event.type === 'clear' ||
+        event.type === 'end'
+      )
         this.playback.handle(event);
     });
   }
@@ -83,7 +101,7 @@ export class VoiceSession {
     }
   }
   async start() {
-    if (this.active || this.disposed) return;
+    if (this.active || this.closing || this.disposed) return;
     this.warning = undefined;
     this.status({ state: 'requesting permission' });
     const input: ActiveInput = {
@@ -241,8 +259,15 @@ export class VoiceSession {
     // A timed-out start may still have created a server session. Cancel it too.
     void this.connection.stopAudio(input.id, true).catch(() => undefined);
   }
+  finishClosing() {
+    if (!this.closing) return;
+    this.closing = false;
+    this.playback.clear();
+    if (!this.disposed) this.status({ state: 'idle' });
+  }
   disconnect() {
-    const wasActive = !!this.active;
+    const wasActive = !!this.active || this.closing;
+    this.closing = false;
     this.abort();
     this.playback.clear();
     if (wasActive && !this.disposed)

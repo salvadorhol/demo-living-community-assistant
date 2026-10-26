@@ -10,6 +10,10 @@ vi.mock('./api/prompt', () => ({
   loadPrompt: mocks.load,
   savePrompt: mocks.save,
 }));
+vi.mock('./api/appointments', () => ({
+  loadAppointments: vi.fn(async () => null),
+  saveAppointments: vi.fn(),
+}));
 vi.mock('./api/session', () => ({ lockApp: mocks.lock }));
 const saved = {
   content: 'Original prompt',

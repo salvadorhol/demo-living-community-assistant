@@ -9,7 +9,8 @@ export interface VoiceRoomSession {
 
 export interface CallStatus {
   callId: string;
-  state: 'active' | 'paused' | 'saving' | 'saved' | 'failed';
+  state: 'active' | 'paused' | 'closing' | 'saving' | 'saved' | 'failed';
+  endReason?: string;
   transcription?: 'available' | 'degraded';
   message?: string;
 }
@@ -58,6 +59,10 @@ export interface TranscriptUpdate {
 
 export interface ServerToClientEvents {
   'call:status': (status: CallStatus) => void;
+  'call:closing': (value: {
+    callId: string;
+    reason: 'demo_sales_handoff';
+  }) => void;
   'transcript:update': (update: TranscriptUpdate) => void;
   'voice:session:error': (error: VoiceSessionError) => void;
   'voice:session:warning': (warning: VoiceSessionWarning) => void;
@@ -95,6 +100,7 @@ export type AudioErrorCode =
 export type AudioAck =
   { ok: true } | { ok: false; code: AudioErrorCode; message: string };
 export type AudioOutputEvent =
+  | { type: 'closing'; callId: string; reason: 'demo_sales_handoff' }
   | { type: 'start'; stream: AudioStream }
   | { type: 'chunk'; chunk: AudioChunk }
   | { type: 'end'; streamId: string }
@@ -122,6 +128,7 @@ export interface AvailableAppointmentsResponse {
   timeZone: string;
   appointments: {
     id: string;
+    date: string;
     startsAt: string;
     localTime?: string;
     durationMinutes: number;

@@ -55,7 +55,7 @@ function setup(
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-it('greets a remembered visitor once, keeps the sales lookup mandatory, and preserves Pause/Resume', async () => {
+it('greets a remembered visitor once, allows immediate appointment lookup, and preserves Pause/Resume', async () => {
   const upstream = new Upstream();
   const registry = createSophieTools(
     { projectId: 'demo-tools', region: 'us-central1' },
@@ -77,10 +77,7 @@ it('greets a remembered visitor once, keeps the sales lookup mandatory, and pres
   await vi.advanceTimersByTimeAsync(0);
   expect(upstream.sent[0]).toMatchObject({
     session: {
-      tool_choice: {
-        type: 'function',
-        name: 'check_sales_director_availability',
-      },
+      tool_choice: 'auto',
     },
   });
   upstream.event({ type: 'session.updated' });

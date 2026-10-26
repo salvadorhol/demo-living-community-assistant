@@ -92,7 +92,8 @@ export function createSophieTools(
   const invoke = dependencies.invoke ?? createFirebaseInvoker(config);
   const loader = dependencies.loader ?? createContactLoader(invoke);
   let known: ContactInformationResponse = { profile: {} };
-  let salesChecked = false;
+  let appointmentsChecked = false;
+  let closingMessage: string | undefined;
   let turn = 0;
   type Draft = {
     token: string;
@@ -120,28 +121,44 @@ export function createSophieTools(
   const validatedInvoke: Invoke = async (name, args, signal) => {
     try {
       const value = await invoke(name, args, signal);
-      if (
-        name === 'getAvailableAppointments' &&
-        isAppointments(value) &&
-        object(value) &&
-        typeof value.requestedDate === 'string' &&
-        /^\d{4}-\d{2}-\d{2}$/.test(value.requestedDate)
-      ) {
+      if (name === 'getAvailableAppointments') {
         offered.clear();
-        for (const slot of value.appointments)
-          if (
-            object(slot) &&
-            typeof slot.id === 'string' &&
-            typeof value.requestedDate === 'string'
-          )
-            offered.set(slot.id, value.requestedDate);
+        appointmentsChecked = false;
+        if (isAppointments(value)) {
+          appointmentsChecked = true;
+          for (const slot of value.appointments)
+            offered.set(slot.id, slot.date);
+        }
       }
       return value;
-    } finally {
-      if (name === 'checkSalesDirectorAvailability') salesChecked = true;
+    } catch (error) {
+      if (name === 'getAvailableAppointments') {
+        offered.clear();
+        appointmentsChecked = false;
+      }
+      throw error;
     }
   };
   const extra: ToolDefinition[] = [
+    {
+      name: 'simulate_sales_handoff',
+      description:
+        'After a successful appointment lookup, use only when no future slots exist or the visitor explicitly cannot attend any offered option. Simulates sales assistance and ends this demo call after a fixed disclosure. No actual transfer or callback is made. Never use for a failed lookup.',
+      enabled: () => appointmentsChecked && !closingMessage,
+      write: true,
+      parameters: shape({ language: { type: 'string', enum: ['en', 'es'] } }),
+      validateArguments: (v: unknown) =>
+        object(v) &&
+        Object.keys(v).length === 1 &&
+        ['en', 'es'].includes(String(v.language)),
+      async execute(args) {
+        closingMessage =
+          args.language === 'es'
+            ? 'Para esta demostración, simularé conectarle con nuestro departamento de ventas para recibir ayuda adicional. La llamada finalizará ahora.'
+            : 'For this demo, I will simulate connecting you with our sales department for additional assistance. The call will now end.';
+        return { simulated: true, endingCall: true };
+      },
+    },
     {
       name: 'get_community_information',
       description:
@@ -358,9 +375,7 @@ export function createSophieTools(
       known.profile.firstName
         ? `Welcome back, ${known.profile.firstName}. This is Sophie, ACME Senior Living's virtual assistant. This conversation is being recorded. How may I help you today?`
         : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual assistant. This conversation is being recorded. How may I help you today?',
-    toolChoice: () =>
-      salesChecked
-        ? 'auto'
-        : { type: 'function', name: 'check_sales_director_availability' },
+    toolChoice: () => 'auto',
+    closingMessage: () => closingMessage,
   });
 }

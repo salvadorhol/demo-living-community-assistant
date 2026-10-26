@@ -87,7 +87,11 @@ export function Workspace() {
           callId.current = status.callId;
           setTranscripts([]);
         }
-        if (callId.current === status.callId) setCall(status);
+        if (callId.current === status.callId) {
+          setCall(status);
+          if (['saving', 'saved', 'failed'].includes(status.state))
+            voice.current?.finishClosing();
+        }
       },
     );
     const unsubscribe = connection.onTranscript((update) => {
@@ -140,13 +144,15 @@ export function Workspace() {
     'stopping',
   ].includes(voiceStatus.state);
   const buttonLabel =
-    voiceStatus.state === 'stopping'
-      ? 'Stopping…'
-      : active
-        ? 'Pause'
-        : call?.state === 'paused'
-          ? 'Resume'
-          : 'Start session';
+    voiceStatus.state === 'closing'
+      ? 'Ending call…'
+      : voiceStatus.state === 'stopping'
+        ? 'Stopping…'
+        : active
+          ? 'Pause'
+          : call?.state === 'paused'
+            ? 'Resume'
+            : 'Start session';
 
   return (
     <main className={styles['page']}>
@@ -191,6 +197,8 @@ export function Workspace() {
               className={styles['primary']}
               disabled={
                 voiceStatus.state === 'stopping' ||
+                voiceStatus.state === 'closing' ||
+                call?.state === 'closing' ||
                 call?.state === 'saving' ||
                 call?.state === 'failed' ||
                 (!active &&
@@ -232,15 +240,17 @@ export function Workspace() {
             role="status"
             aria-label="Microphone status"
           >
-            {pending
-              ? voiceStatus.state === 'requesting permission'
-                ? 'Waiting for microphone permission…'
-                : voiceStatus.state === 'connecting voice'
-                  ? 'Starting session…'
-                  : 'Ending session…'
-              : voiceStatus.state === 'streaming'
-                ? 'Listening · Speak to the assistant'
-                : 'Start a session to talk with the assistant.'}
+            {voiceStatus.state === 'closing'
+              ? 'Finishing the simulated sales transfer…'
+              : pending
+                ? voiceStatus.state === 'requesting permission'
+                  ? 'Waiting for microphone permission…'
+                  : voiceStatus.state === 'connecting voice'
+                    ? 'Starting session…'
+                    : 'Ending session…'
+                : voiceStatus.state === 'streaming'
+                  ? 'Listening · Speak to the assistant'
+                  : 'Start a session to talk with the assistant.'}
           </p>
           {!microphoneSupported() && (
             <p role="alert">
@@ -250,15 +260,20 @@ export function Workspace() {
           )}
           {call && (
             <p role="status" aria-label="Call status">
-              {call.state === 'saving'
-                ? 'Saving call…'
-                : call.state === 'saved'
-                  ? 'Call saved'
-                  : call.state === 'failed'
-                    ? 'Save failed'
-                    : call.state === 'paused'
-                      ? 'Call paused'
-                      : 'Call active'}
+              {call.state === 'closing'
+                ? 'Demo sales transfer · Ending call…'
+                : call.state === 'saved' &&
+                    call.endReason === 'demo_sales_handoff'
+                  ? 'Demo transfer complete. Call ended and saved.'
+                  : call.state === 'saving'
+                    ? 'Saving call…'
+                    : call.state === 'saved'
+                      ? 'Call saved'
+                      : call.state === 'failed'
+                        ? 'Save failed'
+                        : call.state === 'paused'
+                          ? 'Call paused'
+                          : 'Call active'}
             </p>
           )}
           {call?.message && <p role="alert">{call.message}</p>}

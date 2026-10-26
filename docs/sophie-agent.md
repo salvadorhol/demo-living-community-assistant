@@ -2,7 +2,7 @@
 
 Sophie uses the existing Realtime voice model with a modular behavioral prompt.
 `assignment.md` is the source for the canonical community cards and room layouts.
-API responses omit demo/mock markers, and Sophie does not announce demo disclaimers.
+Availability and community responses omit mock markers. The appointment sales-handoff explicitly announces that it is a demo simulation.
 The prompt describes how to converse and when to use tools; it does not duplicate
 the pricing table or full amenities list. There is no model fine-tuning, preview
 product, production monitoring, or extra validation agent in this iteration.
@@ -26,19 +26,24 @@ care, speech therapy, and lease-term units remain unknown. Skilled nursing is
 listed as provided but does not establish memory care or clinical suitability.
 The assignment's address spelling and careers URL are preserved verbatim.
 
-Tours use the current server clock in America/New_York, weekdays 09:00–18:00,
-with mock thirty-minute slots starting on the hour through 17:00. Relative
-English/Spanish weekday phrases resolve in code; ambiguous numeric dates require
-clarification. The historical 2025 clock is removed. "Next Monday" means the
-next occurrence, including seven days ahead if today is Monday. Returned slots
-include UTC and local labels. Requests are revalidated at save time and do not
-reserve inventory.
+Tours use the explicitly configured `appConfig/appointments` Firestore slots,
+interpreted in America/New_York, with thirty-minute durations. The admin page
+edits a JSON array of date/time objects; the service returns future slots in
+chronological order without generating business hours or asking for a date first.
+Appointment inquiries skip the sales-director lookup. Other substantive inquiries
+retain that lookup through the prompt; the unconditional forced tool choice is
+removed so appointments can be retrieved immediately. Selected slots are
+revalidated transactionally when a pending request is saved and do not reserve
+inventory.
 
-The eight-second director lookup replaces the original scripted ten-second
-pause. The initial tool choice is server-controlled; after it completes (including
-failure), normal tools are automatic. The greeting and actual recording disclosure
-are issued once at voice start and survive Pause/Resume. No unsupported transfer,
-keypad voicemail, brochure delivery, or confirmed booking is promised.
+If a successful lookup is empty, or the visitor explicitly cannot attend any
+option, Sophie calls `simulate_sales_handoff`. The server supplies a fixed
+English/Spanish disclosure identifying the simulation, stops microphone capture,
+and finishes the call after closing playback is acknowledged (15-second fallback).
+No actual transfer or callback happens. The recording and transcript are saved
+with `endReason: demo_sales_handoff`. Lookup failures offer retry instead of being
+treated as empty schedules. The greeting and recording disclosure still occur
+once per call and survive Pause/Resume.
 
 ## Session memory and action confirmation
 
@@ -46,7 +51,7 @@ The socket backend prefetches a profile after Firebase authentication, with a
 two-second deadline and bounded short-lived cache. A saved first name
 appears in the first greeting. Otherwise the greeting is generic; a late response
 does not trigger another greeting. Recognition requires the same persisted
-anonymous Firebase identity, not merely the same physical visitor or device.
+persisted Firebase visitor identity, not merely the same physical visitor or device.
 
 Contact collection collects missing fields separately without a permission-to-remember gate.
 Preparation returns exact values and an opaque read-back token; saving is available throughout the session but execution is blocked until a later user speech turn. Corrected values require a new token and another

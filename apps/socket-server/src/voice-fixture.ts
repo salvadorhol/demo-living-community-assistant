@@ -1,3 +1,4 @@
+import { seedTestAppointments } from './testing/seed-appointments.ts';
 import { seedSophiePrompt } from './ai/seed-prompt.ts';
 import { firebasePromptLoader } from './ai/prompt-store.ts';
 import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
@@ -31,6 +32,7 @@ const firebase = initializeApp({
   storageBucket: 'demo-living-community-assistant.firebasestorage.app',
 });
 await seedSophiePrompt({ projectId: config.firebaseProjectId });
+await seedTestAppointments(firebase);
 const upstream = await createFakeOpenAI({ toolCalls: true });
 const connect = upstream.connect;
 const toolConfig = readFirebaseToolConfig(config.firebaseProjectId);

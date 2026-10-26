@@ -40,6 +40,8 @@ export interface VoiceAgentFactory {
     responseStarted?(responseId: string): void;
     turnEnded?(): void;
     degraded?(): void;
+    closing?(): void;
+    closingResponseDone?(): void;
     metadata?(info: Record<string, string>): void;
     output(event: AudioOutputEvent): void;
   }): VoiceAgent;

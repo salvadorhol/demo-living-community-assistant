@@ -1,4 +1,4 @@
-import {createAvailabilityTools} from './availability.ts';
+import {createAvailabilityTools, isFloorPlans} from './availability.ts';
 import {silentLogger} from '../../logger.ts';
 
 const config = {
@@ -58,19 +58,17 @@ it.each(['{"uid":"other"}', '{"url":"https://untrusted"}', '[]', 'null'])(
   }
 );
 
-it.each([
-  null,
-  {},
-  {available: null},
-  {available: 'false'},
-])('rejects malformed sales results %j', async value => {
-  expect(
-    await createAvailabilityTools(config, async () => value).execute(
-      call,
-      context()
-    )
-  ).toMatchObject({ok: false, error: {code: 'INVALID_RESULT'}});
-});
+it.each([null, {}, {available: null}, {available: 'false'}])(
+  'rejects malformed sales results %j',
+  async value => {
+    expect(
+      await createAvailabilityTools(config, async () => value).execute(
+        call,
+        context()
+      )
+    ).toMatchObject({ok: false, error: {code: 'INVALID_RESULT'}});
+  }
+);
 
 it('allows the delayed sales response past the default deadline, but stops at twenty seconds', async () => {
   vi.useFakeTimers();
@@ -114,4 +112,21 @@ it('aborts an in-flight sales request without returning a late result', async ()
   await rejected;
   expect(invocationSignal?.aborted).toBe(true);
   complete({available: false});
+});
+
+it('accepts the existing floor-plan contract without appointment date fields', () => {
+  expect(
+    isFloorPlans({
+      unknown: [],
+      floorPlans: [
+        {
+          id: 'studio',
+          name: 'Studio',
+          bedrooms: 0,
+          bathrooms: null,
+          available: true,
+        },
+      ],
+    })
+  ).toBe(true);
 });

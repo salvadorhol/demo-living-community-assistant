@@ -12,6 +12,10 @@
     "./prompt": {
       "types": "./prompt.d.ts",
       "default": "./prompt.js"
+    },
+    "./appointments": {
+      "types": "./appointments.d.ts",
+      "default": "./appointments.js"
     }
   },
   "nx": {

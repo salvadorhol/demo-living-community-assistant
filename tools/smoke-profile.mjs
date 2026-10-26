@@ -1,3 +1,4 @@
+import { APPOINTMENTS_PATH } from '@living-community-assistant/types/appointments';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -92,7 +93,7 @@ try {
     { ...save, profile: { phone: 'guess' } },
     400,
   );
-  const slots = await call('getAvailableAppointments', { date: 'next Monday' });
+  const slots = await call('getAvailableAppointments', {});
   await db.doc(`sessions/${uid}`).update({ 'contact.consent': false });
   const request = {
     uid,
@@ -100,13 +101,24 @@ try {
     confirmed: true,
     request: {
       kind: 'tour',
-      date: slots.requestedDate,
+      date: slots.appointments[0].date,
       slotId: slots.appointments[0].id,
     },
   };
+  const configuredAppointments = await db.doc(APPOINTMENTS_PATH).get();
   const result = await call('createFollowUpRequest', request);
   assert.equal(result.status, 'pending');
   assert.deepEqual(await call('createFollowUpRequest', request), result);
+  await db.doc(APPOINTMENTS_PATH).update({ slots: [] });
+  // Existing receipts still replay, while new requests recheck the current schedule.
+  assert.deepEqual(await call('createFollowUpRequest', request), result);
+  await call(
+    'createFollowUpRequest',
+    { ...request, requestId: id('removed-slot-' + uid) },
+    409,
+  );
+  await db.doc(APPOINTMENTS_PATH).set(configuredAppointments.data());
+
   assert.equal(
     (await db.collection(`sessions/${uid}/followUpRequests`).get()).size,
     1,

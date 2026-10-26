@@ -41,7 +41,7 @@
         "{workspaceRoot}/dist/functions/main.cjs.map"
       ],
       "options": {
-        "command": "esbuild functions/src/main.ts --bundle --platform=node --target=node24 --packages=external --format=cjs --outfile=dist/functions/main.cjs --sourcemap"
+        "command": "esbuild functions/src/main.ts --bundle --platform=node --target=node24 --packages=external --alias:@living-community-assistant/types/appointments=./libs/shared/types/appointments.js --format=cjs --outfile=dist/functions/main.cjs --sourcemap"
       }
     },
     "prune-lockfile": {

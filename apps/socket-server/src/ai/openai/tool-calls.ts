@@ -23,6 +23,7 @@ interface ToolCallsOptions {
   send(event: object): void;
   fail(error: unknown): void;
   toolsChanged?(): void;
+  onClosing?(): void;
 }
 const isCall = (value: unknown): value is FunctionCall => {
   if (!value || typeof value !== 'object') return false;
@@ -145,13 +146,20 @@ export class ToolCalls {
       this.options.toolsChanged?.();
       this.continuation = randomUUID();
       this.acceptedContinuation = undefined;
+      const closingMessage = this.registry.closingMessage?.();
+      if (closingMessage) this.options.onClosing?.();
       this.options.send({
         type: 'response.create',
         response: {
           metadata: { toolCycleId: this.continuation },
-          ...(this.used >= TOOL_LIMITS.maxCallsPerTurn
-            ? { tool_choice: 'none' }
-            : { tool_choice: this.registry.toolChoice?.() ?? 'auto' }),
+          ...(closingMessage
+            ? {
+                tool_choice: 'none',
+                instructions: `Speak exactly this JSON string as the closing demo disclosure. Do not call tools or ask any questions.\n${JSON.stringify(closingMessage)}`,
+              }
+            : this.used >= TOOL_LIMITS.maxCallsPerTurn
+              ? { tool_choice: 'none' }
+              : { tool_choice: this.registry.toolChoice?.() ?? 'auto' }),
         },
       });
     })()

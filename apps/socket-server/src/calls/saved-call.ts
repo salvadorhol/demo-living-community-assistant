@@ -95,6 +95,9 @@ export class SavedCall {
       state,
       transcription: this.transcription,
       ...(message ? { message } : {}),
+      ...(this.closed && this.reason === 'demo_sales_handoff'
+        ? { endReason: this.reason }
+        : {}),
     });
   }
   pause(paused: boolean) {

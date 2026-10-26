@@ -20,6 +20,21 @@ service cloud.firestore {
       allow update: if isAdmin() && validPrompt() && request.resource.data.revision == resource.data.revision + 1;
       allow list, delete: if false;
     }
+    match /appConfig/appointments {
+      function isAdmin() { return request.auth != null && request.auth.token.admin == true; }
+      function validConfiguration() {
+        let data = request.resource.data;
+        return data.keys().hasAll(['slots', 'revision', 'updatedAt', 'updatedBy'])
+          && data.keys().hasOnly(['slots', 'revision', 'updatedAt', 'updatedBy'])
+          && data.slots is list && data.slots.size() <= 20
+          && data.revision is int && data.revision >= 1 && data.revision <= 9007199254740991
+          && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+      }
+      allow get: if isAdmin();
+      allow create: if isAdmin() && validConfiguration() && request.resource.data.revision == 1;
+      allow update: if isAdmin() && validConfiguration() && request.resource.data.revision == resource.data.revision + 1;
+      allow list, delete: if false;
+    }
     match /sessions/{uid} {
       allow read: if request.auth != null && request.auth.token.appAccess == true && request.auth.uid == uid;
       allow write: if false;

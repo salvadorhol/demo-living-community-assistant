@@ -21,8 +21,7 @@ for (const name of [
       body: JSON.stringify(body),
     });
   const started = performance.now();
-  const args =
-    name === 'getAvailableAppointments' ? { date: 'next Monday' } : {};
+  const args = {};
   const first = await call(args);
   assert.equal(first.status, 200);
   const value = await first.json();

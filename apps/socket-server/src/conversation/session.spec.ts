@@ -229,3 +229,69 @@ it('lets trusted observers request controls only on their current response', asy
     await f.session.close();
   }
 });
+
+it('ends a demo handoff only after final generation, delivery, and valid playback progress', async () => {
+  const f = fixture();
+  await f.session.start(stream());
+  f.provider().closing?.();
+  expect(f.events.output).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'closing' }),
+  );
+  expect(
+    f.session.write({
+      streamId: 'microphone',
+      sequence: 0,
+      data: new Uint8Array(1920),
+    }),
+  ).toEqual({ ok: true });
+  expect(f.agent.write).not.toHaveBeenCalled();
+  f.provider().output({
+    type: 'start',
+    stream: { ...stream('closing-audio') },
+  });
+  f.provider().output({
+    type: 'chunk',
+    chunk: {
+      streamId: 'closing-audio',
+      sequence: 0,
+      data: new Uint8Array(4800),
+    },
+  });
+  f.provider().output({ type: 'end', streamId: 'closing-audio' });
+  f.session.progress({ streamId: 'wrong', playedMs: 100 });
+  f.session.progress({ streamId: 'closing-audio', playedMs: 100000 });
+  f.provider().closingResponseDone?.();
+  expect(f.agent.dispose).not.toHaveBeenCalled();
+  f.session.progress({ streamId: 'closing-audio', playedMs: 99 });
+  expect(f.agent.dispose).not.toHaveBeenCalled();
+  f.session.progress({ streamId: 'closing-audio', playedMs: 100 });
+  await vi.waitFor(() =>
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'saved',
+        endReason: 'demo_sales_handoff',
+      }),
+    ),
+  );
+  await f.session.close();
+});
+it('bounds closing when no playback acknowledgement arrives', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  try {
+    const f = fixture();
+    await f.session.start(stream());
+    f.provider().closing?.();
+    await vi.advanceTimersByTimeAsync(14999);
+    expect(f.agent.dispose).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await f.session.close();
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'saved',
+        endReason: 'demo_sales_handoff',
+      }),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});

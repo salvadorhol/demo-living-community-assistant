@@ -3,7 +3,12 @@ import {onRequest} from 'firebase-functions/v2/https';
 import type {Request, Response} from 'express';
 import {floorPlans, salesDirectorAvailability} from './mock-availability';
 import {communityCards} from './community-data';
-import {resolveTourDate, tourSlots} from './tour-slots';
+import {getApps, initializeApp} from 'firebase-admin/app';
+import {getFirestore} from 'firebase-admin/firestore';
+import {
+  APPOINTMENTS_PATH,
+  availableAppointments,
+} from '@living-community-assistant/types/appointments';
 
 export const privateToolOptions = {
   region: 'us-central1',
@@ -35,11 +40,9 @@ export function toolRequest(
   return request.body;
 }
 export function invalid(response: Response): void {
-  response
-    .status(400)
-    .json({
-      error: {code: 'INVALID_ARGUMENT', message: 'Invalid tool arguments.'},
-    });
+  response.status(400).json({
+    error: {code: 'INVALID_ARGUMENT', message: 'Invalid tool arguments.'},
+  });
 }
 async function empty(
   request: Request,
@@ -61,18 +64,27 @@ export const getAvailableAppointments = onRequest(
   async (request, response) => {
     const body = toolRequest(request, response);
     if (!body) return;
-    const date =
-      typeof body.date === 'string' ? resolveTourDate(body.date) : undefined;
-    if (Object.keys(body).some(k => k !== 'date') || !date) {
+    if (Object.keys(body).length) {
       invalid(response);
       return;
     }
-    await delay(1500);
-    response.json({
-      ...tourSlots(date),
-      requestedDate: date,
-      currentTime: new Date().toISOString(),
-    });
+    try {
+      const snapshot = await getFirestore(getApps()[0] ?? initializeApp())
+        .doc(APPOINTMENTS_PATH)
+        .get();
+      if (!snapshot.exists) throw new Error('Appointments not configured');
+      response.json(availableAppointments(snapshot.get('slots')));
+    } catch {
+      response
+        .status(503)
+        .json({
+          error: {
+            code: 'AVAILABILITY_UNAVAILABLE',
+            message:
+              'Appointment availability could not be loaded. Please retry.',
+          },
+        });
+    }
   }
 );
 export const getAvailableFloorPlans = onRequest(

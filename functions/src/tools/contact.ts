@@ -5,7 +5,11 @@ import {onRequest} from 'firebase-functions/v2/https';
 import type {Request, Response} from 'express';
 import type {ContactProfile} from '@living-community-assistant/types';
 import {invalid, object, privateToolOptions, toolRequest} from './availability';
-import {tourSlots, validDate} from './tour-slots';
+import {
+  APPOINTMENTS_PATH,
+  availableAppointments,
+  validDate,
+} from '@living-community-assistant/types/appointments';
 
 export function validProfile(value: unknown): value is ContactProfile {
   if (!object(value) || !Object.keys(value).length) return false;
@@ -169,8 +173,12 @@ async function write(
         if (
           object(wanted) &&
           wanted.kind === 'tour' &&
-          !tourSlots(wanted.date as string).appointments.some(
-            slot => slot.id === wanted.slotId
+          !availableAppointments(
+            (await transaction.get(database.doc(APPOINTMENTS_PATH))).get(
+              'slots'
+            )
+          ).appointments.some(
+            slot => slot.id === wanted.slotId && slot.date === wanted.date
           )
         )
           throw new Error('SLOT_UNAVAILABLE');

@@ -31,6 +31,8 @@ export function isAppointments(
       (item) =>
         object(item) &&
         typeof item.id === 'string' &&
+        typeof item.date === 'string' &&
+        /^\d{4}-\d{2}-\d{2}$/.test(item.date) &&
         typeof item.startsAt === 'string' &&
         Number.isFinite(Date.parse(item.startsAt)) &&
         nonnegative(item.durationMinutes) &&
@@ -77,7 +79,7 @@ export function createAvailabilityTools(
       name: 'get_available_appointments',
       functionName: 'getAvailableAppointments',
       description:
-        'Look up available tour appointment slots. Read-only; does not book or reserve an appointment.',
+        'Immediately retrieve all configured tour appointment options when a visitor asks about appointments or tours. No date or preference question is needed first. Present only returned options. Read-only; does not book or reserve an appointment.',
       valid: isAppointments,
     },
     {
@@ -94,33 +96,13 @@ export function createAvailabilityTools(
         name: binding.name,
         description: binding.description,
         timeoutMs: binding.timeoutMs,
-        parameters:
-          binding.name === 'get_available_appointments'
-            ? {
-                type: 'object',
-                properties: {
-                  date: {
-                    type: 'string',
-                    description:
-                      'Visitor requested date: YYYY-MM-DD, today/tomorrow, hoy/mañana, or next weekday / próximo día. Pass relative phrases to the server to resolve, rather than calculating dates yourself. Ask to clarify ambiguous numeric dates. Charlotte local time.',
-                  },
-                },
-                required: ['date'],
-                additionalProperties: false,
-              }
-            : {
-                type: 'object',
-                properties: {},
-                required: [],
-                additionalProperties: false,
-              },
-        validateArguments: (value: unknown) =>
-          binding.name === 'get_available_appointments'
-            ? object(value) &&
-              Object.keys(value).length === 1 &&
-              typeof value.date === 'string' &&
-              value.date.length <= 40
-            : isEmptyArguments(value),
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+        validateArguments: isEmptyArguments,
         async execute(
           args: Record<string, unknown>,
           context: Parameters<ToolDefinition['execute']>[1],
