@@ -4,10 +4,9 @@ Sophie uses the existing Realtime voice model with a modular behavioral prompt.
 `assignment.md` is the source for the canonical community cards and room layouts.
 Availability and community responses omit mock markers. Callbacks save pending requests without scheduling a call.
 The prompt describes how to converse and when to use tools; it does not duplicate
-the pricing table or full amenities list. There is no model fine-tuning, preview
-product, production monitoring, or extra validation agent in this iteration.
+the pricing table or full amenities list.
 
-## Facts and deliberate departures from the assignment
+## Community facts and appointments
 
 The community information tool returns one card: pricing, amenities, care,
 payments, policies, contact, or careers. `notProvided` is distinct from false.
@@ -18,7 +17,7 @@ mechanics are not spoken. Live transfer is not implemented or promised.
 Starting monthly prices are $2,000 Independent Living and $3,000 Assisted Living;
 the entrance fee is $3,500. Layouts are Studio, 1 Bedroom / 1 Bath, and
 2 Bedroom / 1.5 Bath. Studio bathrooms, room sizes, room prices, and inventory
-counts are unknown. The fixture no longer invents them.
+counts are unknown.
 
 HUD and Medicaid participation are stated without promising eligibility or
 claiming Section 8 participation. Kosher meals, individual thermostats, memory
@@ -49,9 +48,7 @@ she checks whether the standard arrangement works instead.
 
 Only after separate request confirmation and a successful write does Sophie say the
 callback request is saved and explain the arrangement. This demo does not place calls
-or notify staff. Legacy saved requests/receipts remain intact, and the Cloud Function
-still accepts an optional legacy `preferredTime` for older socket deployments; new
-tools never supply it. Lookup failures remain errors rather than empty availability.
+or notify staff. Lookup failures remain errors rather than empty availability.
 The normal explicit-stop and natural-ending flows remain available throughout.
 
 ## Session memory and action confirmation
@@ -60,7 +57,7 @@ The socket backend prefetches a profile after Firebase authentication, with a
 two-second deadline and bounded short-lived cache. A saved first name
 appears in the first greeting. Otherwise the greeting is generic; a late response
 does not trigger another greeting. Recognition requires the same persisted
-persisted Firebase visitor identity, not merely the same physical visitor or device.
+Firebase visitor identity, not merely the same physical visitor or device.
 
 Contact collection collects missing fields separately without a permission-to-remember gate.
 Preparation returns exact values and an opaque read-back token; saving is available throughout the session but execution is blocked until a later user speech turn. Corrected values require a new token and another
@@ -70,8 +67,8 @@ assent; token/phase validation is not a proof that an utterance semantically mea
 "yes." Ordinary tests and manual voice checks cover this limitation; prompt
 engineering cannot guarantee zero hallucinations.
 
-The root `sessions/{uid}` document gains `contact.profile` and
-`contact.updatedAt`, merged without replacing call metadata. Legacy consent fields are ignored and need no migration. Pending tour/callback
+The root `sessions/{uid}` document stores `contact.profile` and
+`contact.updatedAt`, merged without replacing call metadata. Pending tour/callback
 requests live in `followUpRequests`; private retry receipts live in `toolWrites`.
 The model never supplies a UID or path: the trusted, authenticated socket backend
 injects identity. IAM-private Cloud Functions perform writes, and Firestore rules
@@ -80,29 +77,6 @@ allow only owner reads of profiles/requests and deny direct client writes.
 Cancelled work produces no subsequent acknowledgment. An already committed write
 can remain, so retries reuse the same token/receipt. Tool errors are not treated
 as proof of unavailability or proof that an uncertain write did not commit.
-
-## Release
-
-Builds, unit tests, emulator smoke, and browser fixtures need no live OpenAI key.
-Emulators validate contracts and owner isolation but do not prove deployed IAM.
-Production identifiers and the personal Makefile remain gitignored.
-
-The private profile functions use the default Functions runtime identity. The
-local production configuration now enables `FUNCTIONS_FIRESTORE_ACCESS=true`:
-`make terraform-plan` should show its intentional Firestore role grant. Review
-that plan before `make terraform-apply`; no apply is part of this implementation.
-If using a custom Functions service account, target that identity instead.
-
-After the runtime permission is provisioned, run `make deploy-functions`, then
-`make deploy-websocket`. The local Makefile grants the socket identity invocation
-access to all private functions. No static-site deployment is needed.
-
-Manual voice checks: greeting and disclosure once; first director lookup waits;
-room-specific pricing stays unknown; Sunday tours rejected; kosher/thermostat/
-dementia/large-dog questions retain qualifications; contact spelling and digits
-confirmed before saves; corrections, interruptions and failures do not claim
-success; a returning identity gets a first-name greeting; tour/callback success
-is described only as a pending request.
 
 ## Reviewed prompt publication and closing
 
@@ -116,8 +90,7 @@ node tools/publish-sophie-prompt.mjs --project <project-id> --expected-revision 
 
 The transaction refuses stale revisions and is idempotent when content matches.
 For an emulator, explicitly set `FIRESTORE_EMULATOR_HOST` and use a demo project.
-New calls load the published prompt. Do not use the legacy appointment phrase
-migration for customized six-section prompts.
+New calls load the published prompt.
 
 Foreground tool descriptions require a brief courtesy notice, followed immediately
 by invocation without awaiting a visitor reply. Background profile prefetch is exempt.
