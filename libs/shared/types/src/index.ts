@@ -175,3 +175,5 @@ export interface FollowUpResponse {
   status: 'pending';
   kind: 'tour' | 'callback';
 }
+
+export type * from './review';

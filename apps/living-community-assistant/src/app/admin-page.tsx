@@ -16,6 +16,7 @@ import { loadPrompt, savePrompt } from './api/prompt';
 import { lockApp } from './api/session';
 import styles from './app.module.scss';
 import { AppointmentsEditor } from './appointments-editor';
+import { ReviewPage } from './review-page';
 
 export function AdminPage() {
   const navigate = useNavigate();
@@ -106,7 +107,8 @@ export function AdminPage() {
                 <AdminConfiguration onDirty={setDirty} onBusy={setBusy} />
               }
             />
-            <Route path="review" element={<section aria-label="Review" />} />
+            <Route path="review" element={<ReviewPage />} />
+            <Route path="review/:uid/:callId" element={<ReviewPage />} />
             <Route
               path="*"
               element={<Navigate to="/admin/configuration" replace />}

@@ -52,7 +52,7 @@ test('test emulators use the fixture password without copying a local secret', (
     prepareEmulatorSecrets({ root, test: true });
     assert.equal(
       readFileSync(resolve(root, 'dist/functions/.secret.local'), 'utf8'),
-      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\nADMIN_ACCESS_PASSWORD=${TEST_ADMIN_PASSWORD}\n`,
+      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\nADMIN_ACCESS_PASSWORD=${TEST_ADMIN_PASSWORD}\nOPENAI_API_KEY=fixture-not-a-real-key\n`,
     );
   }));
 

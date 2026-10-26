@@ -28,16 +28,28 @@ export function firebaseCallStore(app: App, bucketName: string): CallStore {
       await batch.commit();
     },
     async update(uid, id, info) {
-      await ref(uid, id).set(
-        { ...info, updatedAt: FieldValue.serverTimestamp() },
-        { merge: true },
-      );
+      const call = ref(uid, id);
+      await db.runTransaction(async (transaction) => {
+        const current = await transaction.get(call);
+        if (!current.exists || current.get('status') === 'deleting')
+          throw new Error('Call is no longer available.');
+        transaction.update(call, {
+          ...info,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
     },
     async transcript(uid, id, value) {
-      await ref(uid, id)
-        .collection('transcripts')
-        .doc(value.id)
-        .set({ ...value, updatedAt: FieldValue.serverTimestamp() });
+      const call = ref(uid, id);
+      await db.runTransaction(async (transaction) => {
+        const current = await transaction.get(call);
+        if (!current.exists || current.get('status') === 'deleting')
+          throw new Error('Call is no longer available.');
+        transaction.set(call.collection('transcripts').doc(value.id), {
+          ...value,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
     },
     async upload(uid, id, path, durationMs) {
       const objectPath = `sessions/${uid}/calls/${id}/recording.wav`;

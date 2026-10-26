@@ -40,7 +40,9 @@ for (const viewport of [
       ),
     ).toBeVisible();
     await page.getByRole('link', { name: 'Review', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Review' })).toBeEmpty();
+    await expect(page.getByRole('region', { name: 'Review' })).toContainText(
+      'Listen to calls',
+    );
     await page.reload();
     await expect(
       page.getByRole('link', { name: 'Review', exact: true }),

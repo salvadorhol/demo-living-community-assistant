@@ -21,7 +21,7 @@ export function prepareEmulatorSecrets({ root, test = false }) {
   if (test) {
     writeFileSync(
       destination,
-      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\nADMIN_ACCESS_PASSWORD=${TEST_ADMIN_PASSWORD}\n`,
+      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\nADMIN_ACCESS_PASSWORD=${TEST_ADMIN_PASSWORD}\nOPENAI_API_KEY=fixture-not-a-real-key\n`,
       { mode: 0o600 },
     );
     chmodSync(destination, 0o600);

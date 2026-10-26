@@ -14,6 +14,9 @@ vi.mock('./api/appointments', () => ({
   loadAppointments: vi.fn(async () => null),
   saveAppointments: vi.fn(),
 }));
+vi.mock('./api/review', () => ({
+  listReviewCalls: vi.fn(async () => ({ calls: [], nextCursor: null })),
+}));
 vi.mock('./api/session', () => ({ lockApp: mocks.lock }));
 const saved = {
   content: 'Original prompt',
@@ -93,7 +96,7 @@ it('allows creation when no prompt exists', async () => {
   ).toBe(true);
 });
 
-it('redirects to configuration and opens a blank review page without loading editors', async () => {
+it('redirects to configuration and opens the review page without loading editors', async () => {
   const router = createMemoryRouter(
     [{ path: '/admin/*', element: <AdminPage /> }],
     { initialEntries: ['/admin'] },

@@ -133,3 +133,11 @@ resource "google_service_account_iam_member" "functions_token_signer" {
   member             = "serviceAccount:${data.google_project.runtime.number}-compute@developer.gserviceaccount.com"
   depends_on         = [google_project_service.deployment]
 }
+
+# Admin review playback and call deletion require private recording-object access.
+resource "google_storage_bucket_iam_member" "functions_review_recordings" {
+  provider = google-beta
+  bucket   = google_storage_bucket.recordings.name
+  role     = "roles/storage.objectUser"
+  member   = "serviceAccount:${data.google_project.runtime.number}-compute@developer.gserviceaccount.com"
+}

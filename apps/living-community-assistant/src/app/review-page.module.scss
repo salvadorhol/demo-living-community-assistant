@@ -1,0 +1,93 @@
+.review {
+  max-width: 960px;
+  overflow-wrap: anywhere;
+}
+.review section {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+}
+.review button,
+.review select {
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+.review audio {
+  display: block;
+  width: 100%;
+  margin: 1rem 0;
+}
+.calls {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.calls > li {
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.calls .deleteAction {
+  padding: 0 1rem 0.75rem;
+}
+.calls a {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1rem;
+  color: inherit;
+  text-decoration: none;
+}
+.calls a:hover {
+  background: #eef2ff;
+}
+.metadata {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.transcripts {
+  padding-left: 1.5rem;
+}
+.transcripts li {
+  padding: 0.75rem;
+  scroll-margin: 1rem;
+  border-radius: 8px;
+}
+.transcripts p {
+  white-space: pre-wrap;
+}
+.highlight {
+  background: #fef3c7;
+}
+.evidence {
+  font-size: 0.85rem !important;
+}
+.review blockquote {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border-left: 3px solid #6366f1;
+  white-space: pre-wrap;
+}
+
+.deleteAction {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+}
+.deleteAction [role='alert'] {
+  width: 100%;
+  margin: 0.25rem 0;
+}
+.review .deleteButton {
+  color: #a32d2d;
+  background: #fff;
+  border: 1px solid #a32d2d;
+  border-radius: 6px;
+}
+.review .deleteButton:hover:not(:disabled) {
+  background: #fff1f1;
+}

@@ -29,3 +29,11 @@ export {
 } from './tools/contact';
 
 export {unlockApp, unlockAdmin} from './access';
+
+export {
+  listReviewCalls,
+  getReviewCall,
+  getReviewAudio,
+  generateCallReview,
+  deleteCall,
+} from './review';
