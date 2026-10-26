@@ -3,6 +3,11 @@ import type { SocketConnection } from '../api/socket';
 import { MicrophoneCapture } from './capture';
 import { AudioPlayback } from './playback';
 
+// PCM16 mono at 24 kHz is 48,000 bytes/second. Bound queued + unacknowledged
+// audio to 500 ms, while pipelining enough 40 ms frames for hosted round trips.
+const MAX_PENDING_INPUT_BYTES = 24_000;
+const MAX_IN_FLIGHT_CHUNKS = 8;
+
 export interface VoiceStatus {
   state:
     | 'idle'
@@ -22,8 +27,9 @@ interface ActiveInput {
   queue: Uint8Array[];
   bytes: number;
   sequence: number;
+  acknowledged: number;
+  inFlight: number;
   ready: boolean;
-  sending?: Promise<void>;
 }
 export class VoiceSession {
   private warning?: string;
@@ -85,6 +91,8 @@ export class VoiceSession {
       queue: [],
       bytes: 0,
       sequence: 0,
+      acknowledged: 0,
+      inFlight: 0,
       ready: false,
       capture: new MicrophoneCapture(
         (data) => this.enqueue(input, data),
@@ -121,7 +129,7 @@ export class VoiceSession {
       if (this.active !== input || !started) return;
       this.status({
         state: 'streaming',
-        chunksSent: input.sequence,
+        chunksSent: input.acknowledged,
         microphoneName: input.capture.microphoneName,
       });
     } catch (error) {
@@ -131,7 +139,7 @@ export class VoiceSession {
   private enqueue(input: ActiveInput, data: Uint8Array) {
     if (this.active !== input || !input.ready) return;
     input.bytes += data.byteLength;
-    if (input.bytes > 12000) {
+    if (input.bytes > MAX_PENDING_INPUT_BYTES) {
       this.fail(
         input,
         new Error('Audio connection fell behind. Please start again.'),
@@ -142,38 +150,42 @@ export class VoiceSession {
     this.pump(input);
   }
   private pump(input: ActiveInput) {
-    if (
-      this.active !== input ||
-      !input.ready ||
-      input.sending ||
-      !input.queue.length
-    )
-      return;
-    input.sending = this.drain(input)
-      .catch((error) => this.fail(input, error))
-      .finally(() => {
-        input.sending = undefined;
-        this.pump(input);
-      });
-  }
-  private async drain(input: ActiveInput) {
-    while (this.active === input && input.queue.length) {
+    while (
+      this.active === input &&
+      input.ready &&
+      input.inFlight < MAX_IN_FLIGHT_CHUNKS &&
+      input.queue.length
+    ) {
       const data = input.queue.shift();
       if (!data) return;
+      // Socket.IO preserves dispatch order. Reserve sequence numbers before
+      // awaiting acknowledgements, which may arrive in a different order.
+      const sequence = input.sequence++;
+      input.inFlight++;
+      void this.send(input, data, sequence);
+    }
+  }
+  private async send(input: ActiveInput, data: Uint8Array, sequence: number) {
+    try {
       await this.connection.sendAudio({
         streamId: input.id,
-        sequence: input.sequence,
+        sequence,
         data,
       });
       if (this.active !== input) return;
       input.bytes -= data.byteLength;
-      input.sequence++;
+      input.acknowledged++;
       this.status({
         state: this.stopping ? 'stopping' : 'streaming',
-        chunksSent: input.sequence,
+        chunksSent: input.acknowledged,
         microphoneName: input.capture.microphoneName,
         ...(this.warning ? { warning: this.warning } : {}),
       });
+    } catch (error) {
+      this.fail(input, error);
+    } finally {
+      input.inFlight--;
+      this.pump(input);
     }
   }
   private stopping = false;
@@ -181,7 +193,7 @@ export class VoiceSession {
     const input = this.active;
     if (!input || this.stopping) return;
     this.stopping = true;
-    this.status({ state: 'stopping', chunksSent: input.sequence });
+    this.status({ state: 'stopping', chunksSent: input.acknowledged });
     this.playback.clear();
     this.active = undefined;
     input.capture.dispose();
@@ -189,7 +201,7 @@ export class VoiceSession {
     try {
       await this.connection.stopAudio(input.id, true);
       if (!this.active && !this.disposed)
-        this.status({ state: 'idle', chunksSent: input.sequence });
+        this.status({ state: 'idle', chunksSent: input.acknowledged });
     } catch (error) {
       if (!this.active && !this.disposed)
         this.status({

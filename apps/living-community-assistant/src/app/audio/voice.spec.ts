@@ -54,7 +54,7 @@ beforeEach(() => {
   mocks.start.mockResolvedValue(true);
   mocks.stop.mockResolvedValue(undefined);
 });
-it('sends chunks serially and immediately discards capture on Stop', async () => {
+it('sends chunks in order and immediately discards capture on Stop', async () => {
   const { voice, connection, status } = setup();
   await voice.start();
   mocks.chunk(new Uint8Array(1920));
@@ -72,24 +72,140 @@ it('sends chunks serially and immediately discards capture on Stop', async () =>
 it('stops when input exceeds the queue budget and never replays discarded chunks', async () => {
   const { voice, connection, status } = setup();
   await voice.start();
-  let finish!: () => void;
-  connection.sendAudio.mockImplementationOnce(
+  const finishes: (() => void)[] = [];
+  connection.sendAudio.mockImplementation(
     () =>
       new Promise<void>((resolve) => {
-        finish = resolve;
+        finishes.push(resolve);
       }),
   );
-  for (let i = 0; i < 7; i++) mocks.chunk(new Uint8Array(1920));
+  for (let i = 0; i < 13; i++) mocks.chunk(new Uint8Array(1920));
   expect(status).toHaveBeenLastCalledWith({
     state: 'error',
     error: expect.stringContaining('fell behind'),
   });
   expect(mocks.dispose).toHaveBeenCalled();
-  finish();
+  expect(connection.sendAudio).toHaveBeenCalledTimes(8);
+  finishes.forEach((finish) => finish());
   await Promise.resolve();
-  expect(connection.sendAudio).toHaveBeenCalledTimes(1);
+  expect(connection.sendAudio).toHaveBeenCalledTimes(8);
   voice.dispose();
 });
+
+it.each([100, 150, 250])(
+  'sustains real-time capture with %i ms acknowledgement latency and jitter',
+  async (latency) => {
+    vi.useFakeTimers();
+    const { voice, connection, status } = setup();
+    try {
+      let inFlight = 0;
+      let peak = 0;
+      connection.sendAudio.mockImplementation(
+        ({ sequence }) =>
+          new Promise((resolve) => {
+            inFlight++;
+            peak = Math.max(peak, inFlight);
+            setTimeout(
+              () => {
+                inFlight--;
+                resolve();
+              },
+              latency + (sequence % 3) * 20,
+            );
+          }),
+      );
+      await voice.start();
+      for (let i = 0; i < 125; i++) {
+        mocks.chunk(new Uint8Array(1920).fill(i));
+        await vi.advanceTimersByTimeAsync(40);
+      }
+      await vi.advanceTimersByTimeAsync(500);
+      expect(
+        connection.sendAudio.mock.calls.map(([chunk]) => chunk.sequence),
+      ).toEqual(Array.from({ length: 125 }, (_, i) => i));
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(8);
+      expect(status.mock.calls.some(([value]) => value.state === 'error')).toBe(
+        false,
+      );
+      expect(status).toHaveBeenLastCalledWith(
+        expect.objectContaining({ state: 'streaming', chunksSent: 125 }),
+      );
+      expect(mocks.dispose).not.toHaveBeenCalled();
+    } finally {
+      voice.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it('bounds the flight window and preserves sequence when acknowledgements arrive out of order', async () => {
+  const { voice, connection, status } = setup();
+  const releases: (() => void)[] = [];
+  connection.sendAudio.mockImplementation(
+    () => new Promise((resolve) => releases.push(resolve)),
+  );
+  await voice.start();
+  for (let i = 0; i < 10; i++) mocks.chunk(new Uint8Array(1920));
+  expect(connection.sendAudio).toHaveBeenCalledTimes(8);
+  releases[3]();
+  await Promise.resolve();
+  releases[0]();
+  await Promise.resolve();
+  expect(
+    connection.sendAudio.mock.calls.map(([chunk]) => chunk.sequence),
+  ).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  releases.forEach((release) => release());
+  await Promise.resolve();
+  expect(status).toHaveBeenLastCalledWith(
+    expect.objectContaining({ chunksSent: 10 }),
+  );
+  voice.dispose();
+});
+
+it.each(['stop', 'disconnect', 'dispose'] as const)(
+  'discards queued audio and ignores late acknowledgements after %s',
+  async (action) => {
+    const { voice, connection, status } = setup();
+    const pending: { resolve(): void; reject(error: Error): void }[] = [];
+    connection.sendAudio.mockImplementation(
+      () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    );
+    await voice.start();
+    for (let i = 0; i < 10; i++) mocks.chunk(new Uint8Array(1920));
+    const oldStream = connection.sendAudio.mock.calls[0][0].streamId;
+    if (action === 'stop') await voice.stop();
+    else if (action === 'disconnect') voice.disconnect();
+    else voice.dispose();
+    const previousStatus = status.mock.calls.length;
+    if (action !== 'dispose') {
+      connection.sendAudio.mockResolvedValue(undefined);
+      await voice.start();
+      mocks.chunk(new Uint8Array(1920));
+      await Promise.resolve();
+      expect(connection.sendAudio.mock.calls.at(-1)?.[0]).toMatchObject({
+        sequence: 0,
+      });
+      expect(connection.sendAudio.mock.calls.at(-1)?.[0].streamId).not.toBe(
+        oldStream,
+      );
+    }
+    const beforeLate = status.mock.calls.length;
+    pending[0].reject(new Error('old timeout'));
+    pending.slice(1).forEach((value) => value.resolve());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      connection.sendAudio.mock.calls.filter(
+        ([chunk]) => chunk.streamId === oldStream,
+      ),
+    ).toHaveLength(8);
+    expect(status.mock.calls.length).toBe(beforeLate);
+    if (action === 'dispose')
+      expect(status.mock.calls.length).toBe(previousStatus);
+    voice.dispose();
+  },
+);
 it('allows permission failure retry and cancels pending capture on disconnect', async () => {
   const { voice, status } = setup();
   mocks.start.mockRejectedValueOnce(new Error('Permission denied'));
