@@ -104,6 +104,7 @@ export function createSocketServer(
       log.error({ event: 'socket.error', err }, 'Socket error'),
     );
     const uid = socket.data.uid;
+    if (typeof audioFactory !== 'function') audioFactory.prefetch?.(uid);
     let room = rooms.get(uid);
     if (!room) {
       room = { roomId: randomUUID(), members: new Set() };

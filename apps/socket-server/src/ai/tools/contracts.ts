@@ -1,12 +1,15 @@
 import type { AppLogger } from '../../logger.ts';
 
 export interface ToolContext {
+  readonly toolCallId?: string;
   readonly uid: string;
   readonly callId?: string;
   readonly signal: AbortSignal;
   readonly logger: AppLogger;
 }
 export interface ToolDefinition {
+  readonly write?: boolean;
+  enabled?(): boolean;
   readonly timeoutMs?: number;
   readonly name: string;
   readonly description: string;

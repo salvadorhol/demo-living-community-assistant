@@ -32,7 +32,7 @@ it('returns unavailable only after eight seconds, keeping existing lookup delays
       sales as never
     );
     const existing = getAvailableAppointments(
-      request() as never,
+      request('POST', {date: 'next Monday'}) as never,
       appointments as never
     );
     await vi.advanceTimersByTimeAsync(1500);
@@ -43,7 +43,7 @@ it('returns unavailable only after eight seconds, keeping existing lookup delays
     await vi.advanceTimersByTimeAsync(1);
     await pending;
     expect(sales.status).toHaveBeenCalledWith(200);
-    expect(sales.json).toHaveBeenCalledWith({mock: true, available: false});
+    expect(sales.json).toHaveBeenCalledWith({available: false});
     expect(sales.set).toHaveBeenCalledWith(
       'Cache-Control',
       'private, no-store'

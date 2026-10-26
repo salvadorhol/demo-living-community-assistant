@@ -114,15 +114,21 @@ test('streams microphone audio to the authenticated server and releases capture 
   await expect(
     page.getByText('Hello from the resident.').first(),
   ).toBeVisible();
-  await expect(page.getByText('Hello! How can I help?').first()).toBeVisible();
+  await expect(page.getByText('Hello! How can I help?').first()).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(
-    page.getByText(/Sample availability: Fire, Maple, Oak/).first(),
+    page
+      .getByText(
+        /Available floor plans: Studio, 1 Bedroom \/ 1 Bath, 2 Bedroom \/ 1.5 Bath/,
+      )
+      .first(),
+  ).toBeVisible({ timeout: 20_000 });
+  await expect(
+    page.getByText(/No sales director is available/).first(),
   ).toBeVisible();
   await expect(
-    page.getByText(/No sales director is available in this demo/).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Sample tour slots: 2026-11-02T10:00:00-05:00/).first(),
+    page.getByText(/Available tour slots: \d{4}-\d{2}-\d{2}T/).first(),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Pause' }).click();
   await expect(status).toContainText(

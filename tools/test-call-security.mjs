@@ -67,6 +67,10 @@ try {
   await adminFirestore(admin)
     .doc(path)
     .set({ uid: user.uid, recording: { bucket, objectPath: recording } });
+  const followUp = `sessions/${user.uid}/followUpRequests/request`;
+  await adminFirestore(admin)
+    .doc(followUp)
+    .set({ kind: 'callback', status: 'pending' });
   await adminFirestore(admin)
     .doc(`${path}/transcripts/utterance`)
     .set({ text: 'private transcript' });
@@ -79,6 +83,7 @@ try {
   for (const c of [owner, other, anonymous]) {
     for (const document of [
       `sessions/${user.uid}`,
+      followUp,
       path,
       `${path}/transcripts/utterance`,
     ]) {

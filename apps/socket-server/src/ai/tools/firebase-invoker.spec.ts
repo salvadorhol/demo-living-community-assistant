@@ -16,7 +16,7 @@ it('uses an audience-specific Google ID token for private production functions',
     Authorization: 'Bearer private-id-token',
   }));
   const request = vi.fn<typeof fetch>(async () =>
-    Response.json({ mock: true }),
+    Response.json({ available: true }),
   );
   await createFirebaseInvoker(production, { fetch: request, getHeaders })(
     'getAvailableAppointments',
@@ -37,7 +37,7 @@ it('uses an audience-specific Google ID token for private production functions',
 it('calls the explicit local emulator without requesting Google credentials', async () => {
   const getHeaders = vi.fn();
   const request = vi.fn<typeof fetch>(async () =>
-    Response.json({ mock: true }),
+    Response.json({ available: true }),
   );
   await createFirebaseInvoker(emulator, { fetch: request, getHeaders })(
     'getAvailableFloorPlans',
@@ -109,7 +109,6 @@ it('does not send a request if cancelled while obtaining an ID token', async () 
 });
 it('validates availability contracts before passing results to the model', async () => {
   const registry = createAvailabilityTools(emulator, async () => ({
-    mock: false,
     floorPlans: 'invalid',
   }));
   expect(

@@ -12,6 +12,8 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
     let active = false;
     let responded = false;
     let toolNames: string[] = [];
+    let forcedTool: string | undefined;
+    let lookupStarted = false;
     const results = new Map<
       string,
       {
@@ -76,11 +78,23 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
         responded = true;
         results.clear();
         const id = `fixture-tools-${++turn}`;
-        const calls = toolNames.map((name, index) => ({
+        lookupStarted = true;
+        const names = forcedTool
+          ? [forcedTool]
+          : toolNames.filter((name) =>
+              [
+                'get_available_floor_plans',
+                'get_available_appointments',
+              ].includes(name),
+            );
+        const calls = names.map((name, index) => ({
           type: 'function_call',
           call_id: `${id}-${index}`,
           name,
-          arguments: '{}',
+          arguments:
+            name === 'get_available_appointments'
+              ? JSON.stringify({ date: 'next Monday' })
+              : '{}',
         }));
         socket.send(
           JSON.stringify({ type: 'response.created', response: { id } }),
@@ -118,9 +132,58 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
           toolNames = event.session.tools.map(
             (tool: { name: string }) => tool.name,
           );
-        active = Boolean(event.session.audio?.input?.turn_detection);
-        if (active) responded = false;
+        if (Object.hasOwn(event.session, 'tool_choice'))
+          forcedTool =
+            typeof event.session.tool_choice === 'object'
+              ? event.session.tool_choice.name
+              : undefined;
+        if (
+          event.session.audio?.input &&
+          Object.hasOwn(event.session.audio.input, 'turn_detection')
+        ) {
+          active = Boolean(event.session.audio.input.turn_detection);
+          if (active) responded = false;
+        }
         socket.send(JSON.stringify({ type: 'session.updated' }));
+      }
+      if (
+        options.toolCalls &&
+        lookupStarted &&
+        event.type === 'response.create' &&
+        event.response?.metadata?.toolCycleId &&
+        results.size === 1 &&
+        [...results.values()].some((v) => v.result?.available === false)
+      ) {
+        const id = `fixture-details-${++turn}`;
+        const names = [
+          'get_available_floor_plans',
+          'get_available_appointments',
+        ].filter((name) => toolNames.includes(name));
+        socket.send(
+          JSON.stringify({
+            type: 'response.created',
+            response: { id, metadata: event.response.metadata },
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            type: 'response.done',
+            response: {
+              id,
+              status: 'completed',
+              output: names.map((name, index) => ({
+                type: 'function_call',
+                call_id: `${id}-${index}`,
+                name,
+                arguments:
+                  name === 'get_available_appointments'
+                    ? JSON.stringify({ date: 'next Monday' })
+                    : '{}',
+              })),
+            },
+          }),
+        );
+        return;
       }
       if (
         active &&
@@ -141,11 +204,19 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
         const appointments = [...results.values()].flatMap(
           (value) => value.result?.appointments ?? [],
         );
+        const greeting = event.response?.instructions?.includes(
+          'Greeting only:',
+        )
+          ? (JSON.parse(
+              event.response.instructions.split('\n').at(-1),
+            ) as string)
+          : undefined;
         const text =
+          greeting ??
           'Hello! How can I help?' +
-          (options.toolCalls
-            ? ` Sample availability: ${floorPlans.map((plan) => plan.name).join(', ')}. Sample tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.${[...results.values()].some((value) => value.ok && value.result?.available === false) ? ' No sales director is available in this demo.' : ''}`
-            : '');
+            (options.toolCalls
+              ? ` Available floor plans: ${floorPlans.map((plan) => plan.name).join(', ')}. Available tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.${[...results.values()].some((value) => value.ok && value.result?.available === false) ? ' No sales director is available.' : ''}`
+              : '');
         for (const type of [
           'response.output_audio_transcript.delta',
           'response.output_audio_transcript.done',
@@ -185,6 +256,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
             response: { id, status: 'completed' },
           }),
         );
+        if (greeting) responded = false;
       }
     });
   });

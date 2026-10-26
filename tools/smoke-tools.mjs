@@ -21,25 +21,32 @@ for (const name of [
       body: JSON.stringify(body),
     });
   const started = performance.now();
-  const first = await call({});
+  const args =
+    name === 'getAvailableAppointments' ? { date: 'next Monday' } : {};
+  const first = await call(args);
   assert.equal(first.status, 200);
   const value = await first.json();
-  assert.equal(value.mock, true);
-  if (name !== 'checkSalesDirectorAvailability')
-    assert.deepEqual(await (await call({})).json(), value);
+  assert.equal(Object.hasOwn(value, 'mock'), false);
+  if (name !== 'checkSalesDirectorAvailability') {
+    const second = await (await call(args)).json();
+    assert.deepEqual(
+      second.appointments ?? second,
+      value.appointments ?? value,
+    );
+  }
   if (name === 'getAvailableAppointments') {
-    assert.equal(value.timeZone, 'America/Detroit');
-    assert.equal(value.appointments.length, 2);
-    assert.equal(value.appointments[0].startsAt, '2026-11-02T10:00:00-05:00');
+    assert.equal(value.timeZone, 'America/New_York');
+    assert.ok(value.appointments.length > 0);
+    assert.ok(Date.parse(value.appointments[0].startsAt) > Date.now());
   } else if (name === 'getAvailableFloorPlans') {
-    assert.equal(value.currency, 'USD');
+    assert.ok(value.unknown.includes('Room-specific pricing'));
     assert.deepEqual(
       value.floorPlans.map((plan) => plan.name),
-      ['Fire', 'Maple', 'Oak'],
+      ['Studio', '1 Bedroom / 1 Bath', '2 Bedroom / 1.5 Bath'],
     );
-    assert.equal(value.floorPlans[0].monthlyRent, 2500);
+    assert.equal(value.floorPlans[0].bathrooms, null);
   } else {
-    assert.deepEqual(value, { mock: true, available: false });
+    assert.deepEqual(value, { available: false });
     assert.ok(
       performance.now() - started >= 8_000,
       'Sales lookup must wait eight seconds',
@@ -51,5 +58,5 @@ for (const name of [
   assert.equal((await fetch(`${base}/${name}`)).status, 405);
 }
 console.log(
-  'Tool smoke passed: private exports, mock availability, deterministic data, and input/method validation.',
+  'Tool smoke passed: private exports, availability, deterministic data, and input/method validation.',
 );

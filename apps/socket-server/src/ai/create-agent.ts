@@ -15,6 +15,7 @@ export function createVoiceAgent({
   metadata?: Readonly<Record<string, string>>;
 }): VoiceAgentFactory {
   return {
+    prefetch: voice.prefetch,
     kind: 'conversation',
     metadata: { ...voice.metadata, ...metadata },
     create(context) {

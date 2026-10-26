@@ -20,14 +20,14 @@ async function setup(
   execute: (
     args: Record<string, unknown>,
     context: { signal: AbortSignal },
-  ) => Promise<unknown> = async () => ({ mock: true }),
+  ) => Promise<unknown> = async () => ({ available: true }),
 ) {
   const upstream = new Upstream();
   const output = vi.fn();
   const registry = createToolRegistry([
     {
       name: 'lookup',
-      description: 'Look up sample data',
+      description: 'Look up availability data',
       parameters: {
         type: 'object',
         properties: {},
@@ -70,7 +70,7 @@ const outputs = (f: Awaited<ReturnType<typeof setup>>) =>
 const continuations = (f: Awaited<ReturnType<typeof setup>>) =>
   f.upstream.sent.filter((event) => event.type === 'response.create');
 it('registers definitions and returns tool results before requesting one continuation', async () => {
-  const execute = vi.fn(async () => ({ mock: true }));
+  const execute = vi.fn(async () => ({ available: true }));
   const f = await setup(execute);
   f.completed();
   await settle();
@@ -79,7 +79,7 @@ it('registers definitions and returns tool results before requesting one continu
   });
   expect(outputs(f)).toHaveLength(1);
   expect(JSON.parse((outputs(f)[0].item as { output: string }).output)).toEqual(
-    { ok: true, result: { mock: true } },
+    { ok: true, result: { available: true } },
   );
   expect(continuations(f)).toHaveLength(1);
   expect(execute).toHaveBeenCalledOnce();
@@ -115,7 +115,7 @@ it('handles multiple tool calls with at most two concurrent bindings', async () 
         peak = Math.max(peak, active);
         releases.push(() => {
           active--;
-          resolve({ mock: true });
+          resolve({ available: true });
         });
       }),
   );
@@ -142,7 +142,7 @@ it('handles multiple tool calls with at most two concurrent bindings', async () 
   f.agent.dispose();
 });
 it('returns budget errors and disables further tool selection', async () => {
-  const execute = vi.fn(async () => ({ mock: true }));
+  const execute = vi.fn(async () => ({ available: true }));
   const f = await setup(execute);
   f.completed(
     'budget',
@@ -184,7 +184,7 @@ it.each(['pause', 'speech', 'dispose', 'replacement'] as const)(
     if (action === 'replacement')
       f.upstream.event({ type: 'response.created', response: { id: 'new' } });
     expect(signal.aborted).toBe(true);
-    finish({ mock: true });
+    finish({ available: true });
     await settle();
     expect(outputs(f)).toHaveLength(0);
     expect(continuations(f)).toHaveLength(0);
@@ -192,7 +192,7 @@ it.each(['pause', 'speech', 'dispose', 'replacement'] as const)(
   },
 );
 it('ignores incomplete/cancelled calls and returns safe errors without ending voice', async () => {
-  const execute = vi.fn(async () => ({ mock: true }));
+  const execute = vi.fn(async () => ({ available: true }));
   const f = await setup(execute);
   f.upstream.event({
     type: 'response.function_call_arguments.done',

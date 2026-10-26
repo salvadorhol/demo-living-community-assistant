@@ -28,6 +28,7 @@ export interface VoiceAgent {
   ): Promise<boolean>;
 }
 export interface VoiceAgentFactory {
+  prefetch?(uid: string): void;
   kind: 'conversation';
   metadata?: Readonly<Record<string, string>>;
   create(context: {

@@ -93,8 +93,7 @@ export type AudioErrorCode =
   | 'AUDIO_FAILED'
   | 'VOICE_CONFIGURATION_ERROR';
 export type AudioAck =
-  | { ok: true }
-  | { ok: false; code: AudioErrorCode; message: string };
+  { ok: true } | { ok: false; code: AudioErrorCode; message: string };
 export type AudioOutputEvent =
   | { type: 'start'; stream: AudioStream }
   | { type: 'chunk'; chunk: AudioChunk }
@@ -118,26 +117,54 @@ export interface VoiceSessionWarning {
   message: string;
 }
 
-/** Demonstration availability only; these lookups never create a booking. */
+/** Availability lookups do not create bookings. */
 export interface AvailableAppointmentsResponse {
-  mock: true;
   timeZone: string;
-  appointments: { id: string; startsAt: string; durationMinutes: number }[];
+  appointments: {
+    id: string;
+    startsAt: string;
+    localTime?: string;
+    durationMinutes: number;
+  }[];
 }
 export interface SalesDirectorAvailabilityResponse {
-  mock: true;
   available: boolean;
 }
 export interface AvailableFloorPlansResponse {
-  mock: true;
-  currency: 'USD';
   floorPlans: {
     id: string;
     name: string;
     bedrooms: number;
-    bathrooms: number;
-    squareFeet: number;
-    monthlyRent: number;
-    availableUnits: number;
+    bathrooms: number | null;
+    available: true;
   }[];
+  unknown: string[];
+}
+
+export type CommunityCategory =
+  | 'pricing'
+  | 'amenities'
+  | 'care'
+  | 'payments'
+  | 'policies'
+  | 'contact'
+  | 'careers';
+export interface CommunityInformationResponse {
+  category: CommunityCategory;
+  facts: Record<string, unknown>;
+  notProvided: string[];
+}
+export interface ContactProfile {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+}
+export interface ContactInformationResponse {
+  profile: ContactProfile;
+}
+export interface FollowUpResponse {
+  requestId: string;
+  status: 'pending';
+  kind: 'tour' | 'callback';
 }

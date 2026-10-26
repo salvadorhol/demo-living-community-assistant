@@ -1,4 +1,5 @@
-import { createAvailabilityTools } from './ai/tools/availability.ts';
+import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
+import { createFirebaseInvoker } from './ai/tools/firebase-invoker.ts';
 import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
 import { ConfigurationError } from './configuration-error.ts';
 import { createLogger } from './logger.ts';
@@ -36,15 +37,19 @@ try {
     projectId: config.firebaseProjectId,
     storageBucket: config.storageBucket,
   });
+  const toolConfig = readFirebaseToolConfig(config.firebaseProjectId);
+  const invoke = createFirebaseInvoker(toolConfig);
+  const loader = createContactLoader(invoke);
   const server = createSocketServer(
     config,
     (token) => getAuth(firebase).verifyIdToken(token),
     createVoiceAgent({
       voice: createRealtimeVoice(undefined, undefined, {
         maxOutputQueueMs: config.voiceOutputQueueMs,
-        tools: createAvailabilityTools(
-          readFirebaseToolConfig(config.firebaseProjectId),
-        ),
+        tools: (uid) => createSophieTools(toolConfig, uid, { invoke, loader }),
+        prefetch: (uid) => {
+          void loader.load(uid);
+        },
       }),
       transcription: (context) => createTranscriptionSession(context),
       metadata: { transcriptionModel: ASSISTANT_PROFILE.transcriptionModel },

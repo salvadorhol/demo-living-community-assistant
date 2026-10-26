@@ -6,9 +6,9 @@ const context = () => ({
   signal: new AbortController().signal,
   logger: silentLogger,
 });
-const definition = (execute = vi.fn(async () => ({ mock: true }))) => ({
+const definition = (execute = vi.fn(async () => ({ available: true }))) => ({
   name: 'lookup',
-  description: 'Read mock data',
+  description: 'Read availability data',
   parameters: { type: 'object', properties: {}, additionalProperties: false },
   validateArguments: isEmptyArguments,
   execute,
@@ -24,7 +24,7 @@ it('exposes only model metadata and executes validated bindings', async () => {
   expect(registry.definitions[0]).not.toHaveProperty('execute');
   expect(await registry.execute(call(), context())).toEqual({
     ok: true,
-    result: { mock: true },
+    result: { available: true },
   });
   expect(tool.execute).toHaveBeenCalledOnce();
 });

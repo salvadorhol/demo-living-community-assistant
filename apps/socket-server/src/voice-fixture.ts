@@ -1,4 +1,5 @@
-import { createAvailabilityTools } from './ai/tools/availability.ts';
+import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
+import { createFirebaseInvoker } from './ai/tools/firebase-invoker.ts';
 import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
 /** Playwright-only entrypoint. Exercises the real adapter against a local fake OpenAI WebSocket. */
 import { createFakeOpenAI } from './testing/fake-openai.ts';
@@ -28,11 +29,15 @@ const firebase = initializeApp({
 });
 const upstream = await createFakeOpenAI({ toolCalls: true });
 const connect = upstream.connect;
+const toolConfig = readFirebaseToolConfig(config.firebaseProjectId);
+const invoke = createFirebaseInvoker(toolConfig);
+const loader = createContactLoader(invoke);
 const provider = createVoiceAgent({
   voice: createRealtimeVoice('fixture-key', connect, {
-    tools: createAvailabilityTools(
-      readFirebaseToolConfig(config.firebaseProjectId),
-    ),
+    tools: (uid) => createSophieTools(toolConfig, uid, { invoke, loader }),
+    prefetch: (uid) => {
+      void loader.load(uid);
+    },
   }),
   transcription: (context) =>
     createTranscriptionSession(context, 'fixture-key', connect),

@@ -18,7 +18,7 @@ const context = () => ({
 });
 
 it('registers a no-argument sales lookup and invokes its trusted function', async () => {
-  const invoke = vi.fn(async () => ({mock: true, available: false}));
+  const invoke = vi.fn(async () => ({available: false}));
   const registry = createAvailabilityTools(config, invoke);
   expect(
     registry.definitions.find(tool => tool.name === call.name)
@@ -35,7 +35,7 @@ it('registers a no-argument sales lookup and invokes its trusted function', asyn
   ).not.toHaveProperty('timeoutMs');
   expect(await registry.execute(call, context())).toEqual({
     ok: true,
-    result: {mock: true, available: false},
+    result: {available: false},
   });
   expect(invoke).toHaveBeenCalledWith(
     'checkSalesDirectorAvailability',
@@ -61,8 +61,8 @@ it.each(['{"uid":"other"}', '{"url":"https://untrusted"}', '[]', 'null'])(
 it.each([
   null,
   {},
-  {mock: false, available: false},
-  {mock: true, available: 'false'},
+  {available: null},
+  {available: 'false'},
 ])('rejects malformed sales results %j', async value => {
   expect(
     await createAvailabilityTools(config, async () => value).execute(
@@ -79,7 +79,7 @@ it('allows the delayed sales response past the default deadline, but stops at tw
       config,
       () =>
         new Promise(resolve =>
-          setTimeout(() => resolve({mock: true, available: false}), 12_000)
+          setTimeout(() => resolve({available: false}), 12_000)
         )
     ).execute(call, context());
     await vi.advanceTimersByTimeAsync(12_000);
@@ -113,5 +113,5 @@ it('aborts an in-flight sales request without returning a late result', async ()
   owner.abort();
   await rejected;
   expect(invocationSignal?.aborted).toBe(true);
-  complete({mock: true, available: false});
+  complete({available: false});
 });

@@ -124,6 +124,29 @@ export function createFirebaseInvoker(
       redirect: 'error',
     });
     if (!response.ok) {
+      if (
+        response.status === 409 &&
+        response.headers.get('content-type')?.includes('application/json')
+      ) {
+        const value = await readBoundedJson(response);
+        const code = (value as { error?: { code?: string } } | null)?.error
+          ?.code;
+        const messages: Record<string, string> = {
+          SLOT_UNAVAILABLE:
+            'That tour slot is no longer available. Look up new slots before preparing another request.',
+          CONTACT_REQUIRED:
+            'Save a confirmed email or phone before requesting follow-up.',
+          CONFLICT:
+            'This confirmation token was already used for different values. Prepare and confirm the corrected values again.',
+        };
+        if (code && Object.hasOwn(messages, code))
+          throw new ToolError(code, messages[code], 409);
+        throw new ToolError(
+          'UPSTREAM_ERROR',
+          'The service could not complete this request. Please try again.',
+          409,
+        );
+      }
       await response.body?.cancel();
       throw new ToolError(
         'UPSTREAM_ERROR',

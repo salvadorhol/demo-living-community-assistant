@@ -5,6 +5,8 @@ import type WebSocket from 'ws';
 import type { AudioOutputEvent } from '@living-community-assistant/types';
 import { createRealtimeVoice } from './realtime-session.ts';
 import { ASSISTANT_PROFILE } from '../assistant-profile.ts';
+import { createSophieTools } from '../tools/sophie.ts';
+import { silentLogger } from '../../logger.ts';
 
 class Upstream extends EventEmitter {
   readyState = 1;
@@ -48,6 +50,70 @@ function setup(
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+it('greets a remembered visitor once, keeps the sales lookup mandatory, and preserves Pause/Resume', async () => {
+  const upstream = new Upstream();
+  const registry = createSophieTools(
+    { projectId: 'demo-tools', region: 'us-central1' },
+    'owner',
+    {
+      invoke: async (name) =>
+        name === 'getContactInformation'
+          ? { profile: { firstName: 'James' } }
+          : { available: false },
+    },
+  );
+  const agent = createRealtimeVoice(
+    'test-key',
+    () => upstream as unknown as WebSocket,
+    { tools: registry },
+  ).create({ uid: 'owner', output: () => undefined, logger: silentLogger });
+  const pending = agent.initialize();
+  upstream.emit('open');
+  await vi.advanceTimersByTimeAsync(0);
+  expect(upstream.sent[0]).toMatchObject({
+    session: {
+      tool_choice: {
+        type: 'function',
+        name: 'check_sales_director_availability',
+      },
+    },
+  });
+  upstream.event({ type: 'session.updated' });
+  await pending;
+  agent.beginInput();
+  const greetings = () =>
+    upstream.sent.filter((e) => e.type === 'response.create');
+  expect(greetings()).toHaveLength(1);
+  expect(greetings()[0]).toMatchObject({
+    response: {
+      tool_choice: 'none',
+      instructions: expect.stringContaining('Welcome back, James.'),
+    },
+  });
+  upstream.event({ type: 'response.created', response: { id: 'greeting' } });
+  upstream.event({
+    type: 'response.done',
+    response: { id: 'greeting', status: 'completed' },
+  });
+  agent.pause();
+  agent.beginInput();
+  expect(greetings()).toHaveLength(1);
+  await registry.execute(
+    {
+      name: 'check_sales_director_availability',
+      arguments: '{}',
+      call_id: 'sales',
+    },
+    {
+      uid: 'owner',
+      signal: new AbortController().signal,
+      logger: silentLogger,
+    },
+  );
+  expect(registry.toolChoice?.()).toBe('auto');
+  agent.dispose();
+});
 
 it('centralizes models and accepts the legacy key only as a fallback', () => {
   expect(ASSISTANT_PROFILE.model).toBe('gpt-realtime-2.1-mini');

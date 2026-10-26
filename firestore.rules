@@ -4,6 +4,10 @@ service cloud.firestore {
     match /sessions/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
+      match /followUpRequests/{requestId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
       match /calls/{callId} {
         allow read: if request.auth != null && request.auth.uid == uid;
         allow write: if false;

@@ -37,7 +37,7 @@ try {
       'demo-living-community-assistant',
       '--config',
       configPath,
-      'node tools/smoke-health.mjs && node tools/smoke-tools.mjs && node tools/test-call-security.mjs',
+      'node tools/smoke-health.mjs && node tools/smoke-tools.mjs && node tools/smoke-profile.mjs && node tools/test-call-security.mjs',
     ],
     {
       cwd: workspaceRoot,

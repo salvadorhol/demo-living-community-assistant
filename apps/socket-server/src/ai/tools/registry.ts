@@ -24,8 +24,17 @@ export const toolFailure = (code: string, message: string): ToolResult => ({
   error: { code, message },
 });
 
-export function createToolRegistry(definitions: readonly ToolDefinition[]) {
+export function createToolRegistry(
+  definitions: readonly ToolDefinition[],
+  lifecycle: {
+    bootstrap?(signal: AbortSignal): Promise<void>;
+    onUserTurn?(): void;
+    greeting?(): string;
+    toolChoice?(): 'auto' | { type: 'function'; name: string };
+  } = {},
+) {
   const entries = new Map<string, ToolDefinition>();
+  let writeTail: Promise<unknown> = Promise.resolve();
   for (const entry of definitions) {
     if (
       entry.timeoutMs !== undefined &&
@@ -42,12 +51,18 @@ export function createToolRegistry(definitions: readonly ToolDefinition[]) {
     entries.set(entry.name, entry);
   }
   return {
-    definitions: definitions.map(({ name, description, parameters }) => ({
-      type: 'function' as const,
-      name,
-      description,
-      parameters,
-    })),
+    ...lifecycle,
+    isWrite: (name: string) => entries.get(name)?.write === true,
+    get definitions() {
+      return definitions
+        .filter((entry) => !entry.enabled || entry.enabled())
+        .map(({ name, description, parameters }) => ({
+          type: 'function' as const,
+          name,
+          description,
+          parameters,
+        }));
+    },
     async execute(
       call: FunctionCall,
       context: ToolContext,
@@ -64,7 +79,7 @@ export function createToolRegistry(definitions: readonly ToolDefinition[]) {
       try {
         signal.throwIfAborted();
         const definition = entries.get(call.name);
-        if (!definition)
+        if (!definition || (definition.enabled && !definition.enabled()))
           throw new ToolError('UNKNOWN_TOOL', 'That tool is not available.');
         if (Buffer.byteLength(call.arguments) > TOOL_LIMITS.maxArgumentBytes)
           throw new ToolError(
@@ -106,11 +121,21 @@ export function createToolRegistry(definitions: readonly ToolDefinition[]) {
           expired,
           Promise.resolve().then(() => {
             signal.throwIfAborted();
-            return definition.execute(args as Record<string, unknown>, {
-              ...context,
-              signal,
-              logger: log,
-            });
+            const execute = () => {
+              signal.throwIfAborted();
+              return definition.execute(args as Record<string, unknown>, {
+                ...context,
+                toolCallId: call.call_id,
+                signal,
+                logger: log,
+              });
+            };
+            if (!definition.write) return execute();
+            const pendingWrite = writeTail.then(execute);
+            writeTail = Promise.race([pendingWrite, expired]).catch(
+              () => undefined,
+            );
+            return pendingWrite;
           }),
         ]);
         signal.throwIfAborted();

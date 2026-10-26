@@ -22,6 +22,7 @@ interface ToolCallsOptions {
   canContinue(): boolean;
   send(event: object): void;
   fail(error: unknown): void;
+  toolsChanged?(): void;
 }
 const isCall = (value: unknown): value is FunctionCall => {
   if (!value || typeof value !== 'object') return false;
@@ -120,7 +121,11 @@ export class ToolCalls {
       };
       await Promise.all(
         Array.from(
-          { length: Math.min(TOOL_LIMITS.concurrency, calls.length) },
+          {
+            length: calls.some((call) => this.registry.isWrite(call.name))
+              ? 1
+              : Math.min(TOOL_LIMITS.concurrency, calls.length),
+          },
           worker,
         ),
       );
@@ -137,6 +142,7 @@ export class ToolCalls {
         });
       }
       if (!active()) return;
+      this.options.toolsChanged?.();
       this.continuation = randomUUID();
       this.acceptedContinuation = undefined;
       this.options.send({
@@ -145,7 +151,7 @@ export class ToolCalls {
           metadata: { toolCycleId: this.continuation },
           ...(this.used >= TOOL_LIMITS.maxCallsPerTurn
             ? { tool_choice: 'none' }
-            : {}),
+            : { tool_choice: this.registry.toolChoice?.() ?? 'auto' }),
         },
       });
     })()
