@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { assertRuntime, loadConfig, workspaceRoot } from './config.mjs';
 import { run } from './process.mjs';
+import { configureReviewInvokers } from './review-invokers.mjs';
 import { readProductionWebEnvironment } from './web-environment.mjs';
 
 const require = createRequire(import.meta.url);
@@ -115,6 +116,10 @@ export async function deploy(
       ],
       { cwd: root },
     );
+    // Callable updates can preserve an enabled Cloud Run Invoker IAM check. Repair
+    // the browser transport explicitly; the handlers still require admin claims.
+    if (target === 'functions')
+      configureReviewInvokers({ projectId, root, execute });
   } finally {
     rmSync(configPath, { force: true });
   }

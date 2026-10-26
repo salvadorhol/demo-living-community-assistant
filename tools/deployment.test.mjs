@@ -13,6 +13,7 @@ import {tmpdir} from 'node:os';
 import {join, dirname} from 'node:path';
 import {loadConfig, assertRuntime, workspaceRoot} from './config.mjs';
 import {deploy} from './deploy.mjs';
+import {configureReviewInvokers, reviewCallables} from './review-invokers.mjs';
 import {terraform} from './terraform.mjs';
 import {selectWebEnvironment} from './web-environment.mjs';
 
@@ -125,6 +126,20 @@ for (const target of ['hosting', 'functions']) {
       firebaseCli: '/mock/firebase.js',
       execute(command, args) {
         calls++;
+        if (command === 'gcloud') {
+          assert.equal(target, 'functions');
+          assert.deepEqual(args, [
+            'run',
+            'services',
+            'update',
+            reviewCallables[calls - 2].toLowerCase(),
+            '--no-invoker-iam-check',
+            '--region=us-central1',
+            '--project=example-project',
+            '--quiet',
+          ]);
+          return;
+        }
         assert.equal(command, process.execPath);
         assert.deepEqual(args.slice(0, 6), [
           '/mock/firebase.js',
@@ -148,7 +163,7 @@ for (const target of ['hosting', 'functions']) {
       },
     };
     await deploy(target, options);
-    assert.equal(calls, 1);
+    assert.equal(calls, target === 'functions' ? 6 : 1);
     await assert.rejects(
       deploy(target, {
         ...options,
@@ -313,5 +328,47 @@ test('Terraform import uses project state and preserves production settings', as
   assert.equal(
     env.TF_VAR_socket_service_account,
     'socket@example-project.iam.gserviceaccount.com'
+  );
+});
+
+test('review invoker setup targets only admin browser callables and stops on failure', () => {
+  assert.deepEqual(reviewCallables, [
+    'listReviewCalls',
+    'getReviewCall',
+    'getReviewAudio',
+    'generateCallReview',
+    'deleteCall',
+  ]);
+  let calls = 0;
+  assert.throws(
+    () =>
+      configureReviewInvokers({
+        projectId: 'example-project',
+        root: '/tmp',
+        execute: () => {
+          calls++;
+          throw new Error('IAM denied');
+        },
+      }),
+    /IAM denied/
+  );
+  assert.equal(calls, 1);
+});
+test('Functions deployment surfaces IAM repair failures and removes temporary config', async t => {
+  const root = fixture(t);
+  await assert.rejects(
+    deploy('functions', {
+      root,
+      config,
+      firebaseCli: '/mock/firebase.js',
+      execute(command) {
+        if (command === 'gcloud') throw new Error('IAM denied');
+      },
+    }),
+    /IAM denied/
+  );
+  assert.equal(
+    readdirSync(root).some(path => path.startsWith('.firebase.deploy.')),
+    false
   );
 });
