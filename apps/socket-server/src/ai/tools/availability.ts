@@ -79,7 +79,7 @@ export function createAvailabilityTools(
       name: 'get_available_appointments',
       functionName: 'getAvailableAppointments',
       description:
-        'After the initial sales-director attempt, immediately retrieve all configured tour appointment options when asked about appointments or tours. No date or preference question is needed first. Present only returned options. Read-only; does not book or reserve an appointment.',
+        'After the initial sales-director attempt, immediately retrieve all configured tour appointment options when asked about appointments or tours. No date or preference question is needed first. Present only returned options. An empty array means no tour appointments: offer an optional callback as soon as a sales representative is available during normal operating hours; do not end the call or invent another date. If all options are unsuitable, offer that same callback. Never use this tool to schedule a callback. Read-only; does not book or reserve an appointment.',
       valid: isAppointments,
     },
     {

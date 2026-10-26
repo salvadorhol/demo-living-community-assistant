@@ -266,7 +266,7 @@ it('separates per-conversation draft state and invalidates cached profiles after
 it('keeps save actions in the response tool snapshot and recovers an unsaved follow-up prerequisite', async () => {
   const invoke = vi.fn(async (name: string) =>
     name === 'saveContactInformation'
-      ? {profile: {firstName: 'James', email: 'james@example.com'}}
+      ? {profile: {firstName: 'James', phone: '7045550100'}}
       : {profile: {}}
   );
   const registry = createSophieTools(config, 'owner', {invoke});
@@ -275,14 +275,13 @@ it('keeps save actions in the response tool snapshot and recovers an unsaved fol
   const prepared = value(
     await registry.execute(
       call('prepare_contact_information', {
-        profile: {firstName: 'James', email: 'james@example.com'},
+        profile: {firstName: 'James', phone: '7045550100'},
       }),
       context
     )
   );
   const request = call('prepare_follow_up_request', {
     kind: 'callback',
-    preferredTime: 'Tomorrow afternoon',
   });
   const missing = await registry.execute(request, context);
   expect(missing).toMatchObject({
@@ -307,86 +306,59 @@ it('keeps save actions in the response tool snapshot and recovers an unsaved fol
   expect(await registry.execute(request, context)).toMatchObject({ok: true});
 });
 
-it('requires the director attempt before appointments and forces handoff after empty availability', async () => {
-  const registry = createSophieTools(config, 'owner', {
-    invoke: async () => ({timeZone: 'America/New_York', appointments: []}),
-  });
-  expect(registry.toolChoice?.()).toBe('auto');
-  expect(
-    await registry.execute(
-      call('simulate_sales_handoff', {language: 'en'}),
-      context
-    )
-  ).toMatchObject({ok: false});
-  expect(
-    await registry.execute(call('get_available_appointments'), context)
-  ).toMatchObject({ok: false});
-  await registry.execute(call('check_sales_director_availability'), context);
-  expect(
-    await registry.execute(call('get_available_appointments', {}), context)
-  ).toMatchObject({ok: true});
-  expect(registry.toolChoice?.()).toEqual({
-    type: 'function',
-    name: 'simulate_sales_handoff',
-  });
-  expect(
-    await registry.execute(
-      call('simulate_sales_handoff', {language: 'en'}),
-      context
-    )
-  ).toMatchObject({ok: true, result: {simulated: true, endingCall: true}});
-  expect(registry.terminalAction?.()?.message).toContain('For this demo');
-  expect(registry.definitions).toEqual([]);
-  expect(
-    await registry.execute(call('get_contact_information', {}), context)
-  ).toMatchObject({ok: false});
-});
-it('never offers simulated handoff after a failed availability lookup', async () => {
-  const registry = createSophieTools(config, 'owner', {
-    invoke: async () => {
-      throw new Error('offline');
-    },
-  });
-  await registry.execute(call('check_sales_director_availability'), context);
-  await registry.execute(call('get_available_appointments', {}), context);
-  expect(registry.definitions.map(t => t.name)).not.toContain(
-    'simulate_sales_handoff'
-  );
-});
-
 it.each([false, true])(
-  'enforces director-first gating, including failed director lookup %s',
+  'keeps callback collection available after empty appointments, including failed director attempt %s',
   async failed => {
     const invoke = vi.fn(async (name: string) => {
       if (name === 'checkSalesDirectorAvailability') {
         if (failed) throw new Error('offline');
         return {available: false};
       }
+      if (name === 'getContactInformation') return {profile: {}};
       return {timeZone: 'America/New_York', appointments: []};
     });
     const registry = createSophieTools(config, 'owner', {invoke});
-    expect(registry.definitions.map(t => t.name)).toContain('end_call');
-    expect(registry.definitions.map(t => t.name)).not.toContain(
-      'get_available_appointments'
-    );
-    await registry.execute(call('get_available_appointments'), context);
-    expect(invoke).not.toHaveBeenCalled();
-    await registry.execute(call('check_sales_director_availability'), context);
-    expect(registry.definitions.map(t => t.name)).toContain(
-      'get_available_appointments'
-    );
-    await registry.execute(call('get_available_appointments'), context);
-    expect(registry.definitions.map(t => t.name).sort()).toEqual([
-      'end_call',
-      'simulate_sales_handoff',
-    ]);
     expect(
       await registry.execute(call('get_available_appointments'), context)
     ).toMatchObject({ok: false});
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).not.toHaveBeenCalled();
+    await registry.execute(call('check_sales_director_availability'), context);
+    expect(
+      await registry.execute(call('get_available_appointments'), context)
+    ).toMatchObject({ok: true, result: {appointments: []}});
+    expect(registry.toolChoice?.()).toBe('auto');
+    expect(registry.terminalAction?.()).toBeUndefined();
+    expect(registry.definitions.map(t => t.name)).toContain(
+      'prepare_contact_information'
+    );
+    expect(registry.definitions.map(t => t.name)).not.toContain(
+      'simulate_sales_handoff'
+    );
+    expect(
+      await registry.execute(call('get_contact_information'), context)
+    ).toMatchObject({ok: true});
+    expect(
+      await registry.execute(
+        call('prepare_contact_information', {profile: {phone: '7045550100'}}),
+        context
+      )
+    ).toMatchObject({ok: true});
   }
 );
-it('allows an interrupted empty-result turn to choose immediate termination', async () => {
+it('preserves failed availability as an error without a transfer or call ending', async () => {
+  const registry = createSophieTools(config, 'owner', {
+    invoke: async () => {
+      throw new Error('offline');
+    },
+  });
+  await registry.execute(call('check_sales_director_availability'), context);
+  expect(
+    await registry.execute(call('get_available_appointments'), context)
+  ).toMatchObject({ok: false});
+  expect(registry.toolChoice?.()).toBe('auto');
+  expect(registry.terminalAction?.()).toBeUndefined();
+});
+it('allows immediate termination after an empty result', async () => {
   const registry = createSophieTools(config, 'owner', {
     invoke: async name =>
       name === 'checkSalesDirectorAvailability'
@@ -395,11 +367,6 @@ it('allows an interrupted empty-result turn to choose immediate termination', as
   });
   await registry.execute(call('check_sales_director_availability'), context);
   await registry.execute(call('get_available_appointments'), context);
-  expect(registry.toolChoice?.()).toMatchObject({
-    name: 'simulate_sales_handoff',
-  });
-  registry.onUserTurn?.();
-  expect(registry.toolChoice?.()).toBe('auto');
   await registry.execute(
     call('end_call', {reason: 'visitor_requested', language: 'en'}),
     context
@@ -408,6 +375,81 @@ it('allows an interrupted empty-result turn to choose immediate termination', as
     reason: 'visitor_requested',
     immediate: true,
   });
+});
+it('requires phone rather than email for callbacks and rejects callback scheduling arguments', async () => {
+  const registry = createSophieTools(config, 'owner', {
+    invoke: async () => ({profile: {email: 'person@example.com'}}),
+  });
+  await registry.bootstrap?.(context.signal);
+  expect(
+    await registry.execute(
+      call('prepare_follow_up_request', {kind: 'callback'}),
+      context
+    )
+  ).toMatchObject({
+    ok: false,
+    error: {
+      code: 'CONTACT_REQUIRED',
+      message: expect.stringContaining('phone number'),
+    },
+  });
+  for (const args of [
+    {kind: 'callback', preferredTime: 'Tomorrow'},
+    {kind: 'callback', slotId: 'slot'},
+  ]) {
+    expect(
+      await registry.execute(call('prepare_follow_up_request', args), context)
+    ).toMatchObject({ok: false, error: {code: 'INVALID_ARGUMENT'}});
+  }
+  const definition = registry.definitions.find(
+    t => t.name === 'prepare_follow_up_request'
+  );
+  expect(definition).toBeDefined();
+  expect(JSON.stringify(definition?.parameters)).not.toContain('preferredTime');
+});
+it('prepares unscheduled callbacks and requires a new confirmation turn before saving', async () => {
+  const invoke = vi.fn(async (name: string, args: Record<string, unknown>) =>
+    name === 'getContactInformation'
+      ? {profile: {phone: '7045550100'}}
+      : {requestId: args.requestId, kind: 'callback', status: 'pending'}
+  );
+  const registry = createSophieTools(config, 'owner', {invoke});
+  await registry.bootstrap?.(context.signal);
+  const staged = value(
+    await registry.execute(
+      call('prepare_follow_up_request', {kind: 'callback'}),
+      context
+    )
+  );
+  expect(staged.valuesToReadBack).toEqual({
+    kind: 'callback',
+    arrangement: expect.stringContaining('normal operating hours'),
+  });
+  const save = {confirmationToken: staged.confirmationToken, confirmed: true};
+  expect(
+    await registry.execute(call('create_follow_up_request', save), context)
+  ).toMatchObject({ok: false, error: {code: 'CONFIRMATION_REQUIRED'}});
+  registry.onUserTurn?.();
+  expect(
+    await registry.execute(call('create_follow_up_request', save), context)
+  ).toMatchObject({
+    ok: true,
+    result: {
+      nextStep: expect.stringContaining('as soon as one becomes available'),
+    },
+  });
+  const saved = invoke.mock.calls.find(
+    ([name]) => name === 'createFollowUpRequest'
+  );
+  expect(saved?.[1].request).toEqual({kind: 'callback'});
+  expect(
+    await registry.execute(call('create_follow_up_request', save), context)
+  ).toMatchObject({ok: true});
+  expect(
+    invoke.mock.calls
+      .filter(([name]) => name === 'createFollowUpRequest')
+      .map(([, args]) => args)
+  ).toEqual([saved?.[1], saved?.[1]]);
 });
 it('provides timezone-aware tour read-backs without adding fields to the stored request', async () => {
   const invoke = vi.fn(async (name: string, args: Record<string, unknown>) => {

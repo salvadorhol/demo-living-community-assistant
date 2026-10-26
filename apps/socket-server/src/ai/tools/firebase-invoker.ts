@@ -135,7 +135,7 @@ export function createFirebaseInvoker(
           SLOT_UNAVAILABLE:
             'That tour slot is no longer available. Look up new slots before preparing another request.',
           CONTACT_REQUIRED:
-            'Save a confirmed email or phone before requesting follow-up.',
+            'Save a confirmed phone number before requesting a callback; tours require a confirmed email or phone. If the required details are already prepared and confirmed in a later turn, save them with the existing token first.',
           CONFLICT:
             'This confirmation token was already used for different values. Prepare and confirm the corrected values again.',
         };

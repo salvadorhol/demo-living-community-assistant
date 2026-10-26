@@ -94,10 +94,8 @@ export function createSophieTools(
   const invoke = dependencies.invoke ?? createFirebaseInvoker(config);
   const loader = dependencies.loader ?? createContactLoader(invoke);
   let known: ContactInformationResponse = { profile: {} };
-  let appointmentsChecked = false;
   let terminalAction: TerminalAction | undefined;
   let salesChecked = false;
-  let emptyHandoffTurn: number | undefined;
   let availabilityGeneration = 0;
   let turn = 0;
   type Draft = {
@@ -144,12 +142,8 @@ export function createSophieTools(
         !signal.aborted
       ) {
         offered.clear();
-        appointmentsChecked = false;
-        emptyHandoffTurn = undefined;
         if (isAppointments(value)) {
-          appointmentsChecked = true;
           offeredTimeZone = value.timeZone;
-          if (!value.appointments.length) emptyHandoffTurn = turn;
           for (const slot of value.appointments) offered.set(slot.id, slot);
         }
       }
@@ -161,8 +155,6 @@ export function createSophieTools(
         !signal.aborted
       ) {
         offered.clear();
-        appointmentsChecked = false;
-        emptyHandoffTurn = undefined;
       }
       throw error;
     } finally {
@@ -173,7 +165,7 @@ export function createSophieTools(
     {
       name: 'end_call',
       description:
-        'End the current call. For an explicit request to stop/end/stop talking, use visitor_requested immediately with no courtesy notice, goodbye, or extra question. For conversation_complete, first ask whether anything else is needed and wait for the visitor to indicate no; then give the brief please-wait notice and invoke immediately. The server handles goodbye playback for natural closing and saves the call. Never use a demo transfer for ordinary call ending.',
+        'End the current call. For an explicit request to stop/end/stop talking, use visitor_requested immediately with no courtesy notice, goodbye, or extra question. For conversation_complete, first ask whether anything else is needed and wait for the visitor to indicate no; then give the brief please-wait notice and invoke immediately. The server handles goodbye playback for natural closing and saves the call. Do not end merely because tour slots are unavailable or a callback was offered.',
       terminal: true,
       write: true,
       parameters: shape({
@@ -205,36 +197,6 @@ export function createSophieTools(
               }),
         };
         return { endingCall: true };
-      },
-    },
-    {
-      name: 'simulate_sales_handoff',
-      description:
-        'After a successful appointment lookup, use only when no future slots exist or the visitor explicitly cannot attend any offered option. Simulates sales assistance and ends this demo call after a fixed disclosure. No actual transfer or callback is made. Never use for a failed lookup.',
-      enabled: () => appointmentsChecked && !terminalAction,
-      terminal: true,
-      write: true,
-      parameters: shape({ language: { type: 'string', enum: ['en', 'es'] } }),
-      validateArguments: (v: unknown) =>
-        object(v) &&
-        Object.keys(v).length === 1 &&
-        ['en', 'es'].includes(String(v.language)),
-      async execute(args) {
-        const empty = offered.size === 0;
-        const message =
-          args.language === 'es'
-            ? empty
-              ? 'No hay citas para visitas disponibles en este momento. Para esta demostración, simularé una transferencia a ventas y finalizaré la llamada.'
-              : 'Como esos horarios no le sirven, simularé una transferencia a ventas para esta demostración y finalizaré la llamada.'
-            : empty
-              ? 'No tour appointments are available right now. For this demo, I will simulate a sales transfer and end the call.'
-              : 'Since those times do not work for you, I will simulate a sales transfer for this demo and end the call.';
-        terminalAction = {
-          reason: 'demo_sales_handoff',
-          immediate: false,
-          message,
-        };
-        return { simulated: true, endingCall: true };
       },
     },
     {
@@ -330,36 +292,37 @@ export function createSophieTools(
     {
       name: 'prepare_follow_up_request',
       description:
-        'Prepare a pending tour or callback request for read-back after collecting a remembered email or phone. Tour slotId must come from the most recent availability lookup. No booking or actual callback is made.',
+        'Prepare a pending request for read-back. Tours require a saved email or phone and a slotId from the latest availability lookup. Callbacks require a confirmed saved phone number and only kind=callback: never ask for or offer callback dates, times, or deadlines, and never use appointment slots for callbacks. The callback is as soon as a sales representative becomes available during normal operating hours. Obtain separate request confirmation before creating. No booking or actual call is made.',
       parameters: shape(
         {
           kind: { type: 'string', enum: ['tour', 'callback'] },
           slotId: string,
-          preferredTime: string,
         },
         ['kind'],
       ),
       validateArguments: (v) =>
         object(v) &&
-        Object.keys(v).every((k) =>
-          ['kind', 'slotId', 'preferredTime'].includes(k),
-        ) &&
+        Object.keys(v).every((k) => ['kind', 'slotId'].includes(k)) &&
         (v.kind === 'tour'
-          ? typeof v.slotId === 'string' &&
-            offered.has(v.slotId) &&
-            v.preferredTime === undefined
-          : v.kind === 'callback' &&
-            typeof v.preferredTime === 'string' &&
-            v.preferredTime.trim().length > 0 &&
-            v.preferredTime.length <= 200 &&
-            v.slotId === undefined),
+          ? typeof v.slotId === 'string' && offered.has(v.slotId)
+          : v.kind === 'callback' && v.slotId === undefined),
       async execute(args) {
-        if (!known.profile.email && !known.profile.phone)
+        const callback = args.kind === 'callback';
+        if (
+          callback
+            ? !known.profile.phone
+            : !known.profile.email && !known.profile.phone
+        )
           throw new ToolError(
             'CONTACT_REQUIRED',
-            draft?.kind === 'contact'
-              ? 'Contact details are prepared but not saved. If the visitor has confirmed the read-back in a later turn, call save_contact_information with the existing confirmation token before preparing this request. Otherwise ask them to confirm the prepared details. Do not ask for a different contact method or claim a save failed.'
-              : 'No saved email or phone is available. Prepare, confirm, and save a supplied email or phone before preparing this request. No contact write was attempted by this tool.',
+            draft?.kind === 'contact' &&
+              (callback
+                ? draft.value.phone
+                : draft.value.email || draft.value.phone)
+              ? 'Required contact details are prepared but not saved. If the visitor confirmed them in a later turn, call save_contact_information with the existing token before preparing this request. Otherwise ask for confirmation. Do not ask for a different contact method or claim a save failed.'
+              : callback
+                ? 'A confirmed saved phone number is required for a callback; email alone is insufficient. Prepare, confirm, and save a supplied phone number, then retry. Do not ask for a callback date or time. No contact write was attempted.'
+                : 'No saved email or phone is available. Prepare, confirm, and save a supplied email or phone before preparing this request. No contact write was attempted.',
           );
         return prepare(
           'request',
@@ -369,14 +332,18 @@ export function createSophieTools(
                 slotId: args.slotId,
                 date: offered.get(args.slotId as string)?.date,
               }
-            : { kind: 'callback', preferredTime: args.preferredTime },
+            : { kind: 'callback' },
           args.kind === 'tour'
             ? {
                 ...offered.get(args.slotId as string),
                 kind: 'tour',
                 timeZone: offeredTimeZone,
               }
-            : { kind: 'callback', preferredTime: args.preferredTime },
+            : {
+                kind: 'callback',
+                arrangement:
+                  'A sales representative will call as soon as one becomes available during normal operating hours. No specific date, time, or deadline is scheduled.',
+              },
         );
       },
     },
@@ -388,7 +355,7 @@ export function createSophieTools(
       description:
         kind === 'contact'
           ? 'Save the prepared contact values ONLY after the visitor explicitly confirms the read-back in a new turn.'
-          : 'Save the confirmed prepared request as pending staff confirmation. This does not reserve a tour or schedule a callback.',
+          : 'Save only after separate request confirmation in a new user turn. On callback success, say the callback request is saved and a sales representative will call as soon as one becomes available during normal operating hours. Never promise a specific callback time or claim a call was placed. Tours remain pending staff confirmation.',
       parameters: shape({ confirmationToken: string, confirmed: yes }),
       // Keep save actions visible before VAD starts the confirmation response.
       // Execution still enforces the token, later turn, and expiry below.
@@ -444,7 +411,13 @@ export function createSophieTools(
             'The request could not be verified.',
           );
         // Keep the token for safe retries if the acknowledgement is interrupted.
-        return result;
+        return kind === 'request' && pending.value.kind === 'callback'
+          ? {
+              ...(result as Record<string, unknown>),
+              nextStep:
+                'Only now tell the visitor their callback request is saved and a sales representative will call as soon as one becomes available during normal operating hours. Do not offer dates, times, deadlines, or claim staff were contacted. Continue helping or use the normal closing flow.',
+            }
+          : result;
       },
     })),
   ];
@@ -455,7 +428,6 @@ export function createSophieTools(
     },
     onUserTurn() {
       turn++;
-      emptyHandoffTurn = undefined;
     },
     greeting: () =>
       known.profile.firstName
@@ -463,12 +435,6 @@ export function createSophieTools(
         : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual sales assistant. This conversation is being recorded. How may I help you today?',
     toolCourtesy: true,
     toolAllowed: (name) => {
-      if (
-        emptyHandoffTurn === turn &&
-        name !== 'simulate_sales_handoff' &&
-        name !== 'end_call'
-      )
-        return false;
       if (
         [
           'get_community_information',
@@ -479,10 +445,7 @@ export function createSophieTools(
         return salesChecked;
       return true;
     },
-    toolChoice: () =>
-      emptyHandoffTurn === turn
-        ? { type: 'function', name: 'simulate_sales_handoff' }
-        : 'auto',
+    toolChoice: () => 'auto',
     terminalAction: () => terminalAction,
   });
 }

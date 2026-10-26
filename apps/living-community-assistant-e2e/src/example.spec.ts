@@ -332,7 +332,7 @@ test('an ordinary app session cannot open the prompt editor', async ({
   await expect(page.getByLabel('Sophie’s prompt')).toHaveCount(0);
 });
 
-test('edits appointment JSON and completes a disclosed sales handoff after playback', async ({
+test('offers and saves an unscheduled callback after empty appointments', async ({
   page,
   browserName,
 }) => {
@@ -372,9 +372,9 @@ test('edits appointment JSON and completes a disclosed sales handoff after playb
         const stream = await getUserMedia(constraints);
         (
           globalThis as typeof globalThis & {
-            handoffTracks: MediaStreamTrack[];
+            callbackTracks: MediaStreamTrack[];
           }
-        ).handoffTracks = stream.getTracks();
+        ).callbackTracks = stream.getTracks();
         return stream;
       };
     });
@@ -386,25 +386,18 @@ test('edits appointment JSON and completes a disclosed sales handoff after playb
       .getByRole('button', { name: 'Start session', exact: true })
       .click();
     await expect(
-      visitor.getByText(/For this demo, I will simulate a sales transfer/),
-    ).toBeVisible({ timeout: 15000 });
+      visitor.getByText(/No tour appointments are available right now/),
+    ).toBeVisible({ timeout: 20000 });
+    await expect(
+      visitor.getByText(/Your callback request is saved/),
+    ).toBeVisible({ timeout: 20000 });
     await expect(
       visitor.getByRole('status', { name: 'Call status' }),
-    ).toHaveText('Demo transfer complete. Call ended and saved.', {
-      timeout: 20000,
-    });
-    expect(
-      await visitor.evaluate(() =>
-        (
-          globalThis as typeof globalThis & {
-            handoffTracks: MediaStreamTrack[];
-          }
-        ).handoffTracks.every((track) => track.readyState === 'ended'),
-      ),
-    ).toBe(true);
+    ).toHaveText('Call active');
+    await expect(visitor.getByText(/simulate a sales transfer/)).toHaveCount(0);
     const user = await storedUser(visitor);
     const response = await visitor.request.get(
-      `http://127.0.0.1:8380/v1/projects/demo-living-community-assistant/databases/(default)/documents/sessions/${user!.uid}/calls`,
+      `http://127.0.0.1:8380/v1/projects/demo-living-community-assistant/databases/(default)/documents/sessions/${user!.uid}/followUpRequests`,
       {
         headers: {
           Authorization: `Bearer ${user!.stsTokenManager.accessToken}`,
@@ -412,11 +405,25 @@ test('edits appointment JSON and completes a disclosed sales handoff after playb
       },
     );
     expect(response.ok()).toBe(true);
-    const calls = await response.json();
+    const requests = await response.json();
+    expect(requests.documents).toHaveLength(1);
+    expect(requests.documents[0].fields.kind.stringValue).toBe('callback');
+    expect(requests.documents[0].fields.status.stringValue).toBe('pending');
+    expect(requests.documents[0].fields.preferredTime).toBeUndefined();
+    expect(requests.documents[0].fields.slotId).toBeUndefined();
+    await visitor
+      .getByRole('button', { name: 'End call', exact: true })
+      .click();
+    await expect(
+      visitor.getByRole('status', { name: 'Call status' }),
+    ).toHaveText('Call saved', { timeout: 20000 });
     expect(
-      calls.documents.some(
-        (call: { fields: { endReason?: { stringValue: string } } }) =>
-          call.fields.endReason?.stringValue === 'demo_sales_handoff',
+      await visitor.evaluate(() =>
+        (
+          globalThis as typeof globalThis & {
+            callbackTracks: MediaStreamTrack[];
+          }
+        ).callbackTracks.every((track) => track.readyState === 'ended'),
       ),
     ).toBe(true);
   } finally {

@@ -14,11 +14,15 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
     let toolNames: string[] = [];
     let forcedTool: string | undefined;
     let lookupStarted = false;
+    // Scripted visitor turns only for the empty-appointments browser scenario.
+    let callbackStep = 0;
+    let callbackReadyAt = 0;
     const results = new Map<
       string,
       {
         ok?: boolean;
         result?: {
+          confirmationToken?: string;
           available?: boolean;
           floorPlans?: { name: string }[];
           appointments?: { startsAt: string }[];
@@ -65,7 +69,69 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
         event.type === 'conversation.item.create' &&
         event.item?.type === 'function_call_output'
       ) {
-        results.set(event.item.call_id, JSON.parse(event.item.output));
+        const toolResult = JSON.parse(event.item.output);
+        if (!toolResult.ok)
+          console.warn('Fixture tool error', toolResult.error);
+        results.set(event.item.call_id, toolResult);
+        return;
+      }
+      if (
+        options.toolCalls &&
+        active &&
+        event.type === 'input_audio_buffer.append' &&
+        callbackStep > 0 &&
+        callbackStep < 5 &&
+        Date.now() >= callbackReadyAt
+      ) {
+        callbackReadyAt = Number.POSITIVE_INFINITY;
+        socket.send(
+          JSON.stringify({ type: 'input_audio_buffer.speech_started' }),
+        );
+        socket.send(
+          JSON.stringify({ type: 'input_audio_buffer.speech_stopped' }),
+        );
+        const token = [...results.values()]
+          .reverse()
+          .find((value) => value.result?.confirmationToken)
+          ?.result?.confirmationToken;
+        const steps = [
+          {
+            name: 'prepare_contact_information',
+            args: { profile: { phone: '7045550100' } },
+          },
+          {
+            name: 'save_contact_information',
+            args: { confirmationToken: token, confirmed: true },
+          },
+          { name: 'prepare_follow_up_request', args: { kind: 'callback' } },
+          {
+            name: 'create_follow_up_request',
+            args: { confirmationToken: token, confirmed: true },
+          },
+        ];
+        const step = steps[callbackStep - 1];
+        callbackStep++;
+        const id = `fixture-callback-${++turn}`;
+        socket.send(
+          JSON.stringify({ type: 'response.created', response: { id } }),
+        );
+        socket.send(
+          JSON.stringify({
+            type: 'response.done',
+            response: {
+              id,
+              status: 'completed',
+              output: [
+                {
+                  type: 'function_call',
+                  call_id: id,
+                  name: step.name,
+                  arguments: JSON.stringify(step.args),
+                },
+              ],
+            },
+          }),
+        );
         return;
       }
       if (
@@ -190,43 +256,6 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
           'Speak exactly this JSON string as the server-owned closing message.',
         );
       if (
-        options.toolCalls &&
-        event.type === 'response.create' &&
-        !closingDisclosure &&
-        toolNames.includes('simulate_sales_handoff') &&
-        [...results.values()].some(
-          (value) =>
-            Array.isArray(value.result?.appointments) &&
-            value.result.appointments.length === 0,
-        )
-      ) {
-        const id = `fixture-handoff-${++turn}`;
-        socket.send(
-          JSON.stringify({
-            type: 'response.created',
-            response: { id, metadata: event.response?.metadata },
-          }),
-        );
-        socket.send(
-          JSON.stringify({
-            type: 'response.done',
-            response: {
-              id,
-              status: 'completed',
-              output: [
-                {
-                  type: 'function_call',
-                  call_id: `${id}-handoff`,
-                  name: 'simulate_sales_handoff',
-                  arguments: JSON.stringify({ language: 'en' }),
-                },
-              ],
-            },
-          }),
-        );
-        return;
-      }
-      if (
         (active || closingDisclosure) &&
         ((event.type === 'input_audio_buffer.append' && !responded) ||
           event.type === 'response.create')
@@ -257,9 +286,25 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
               event.response.instructions.split('\n').at(-1),
             ) as string)
           : undefined;
+        const emptyAppointments = [...results.values()].some(
+          (value) =>
+            Array.isArray(value.result?.appointments) &&
+            value.result.appointments.length === 0,
+        );
+        if (!greeting && emptyAppointments && callbackStep === 0)
+          callbackStep = 1;
+        const callbackText = [
+          '',
+          'No tour appointments are available right now. Would you like a sales representative to call you back as soon as one is available during normal operating hours?',
+          'Your phone number is 7 0 4 5 5 5 0 1 0 0. Is that correct?',
+          'Your phone number is saved. Would you like me to prepare your callback request?',
+          'A sales representative will call as soon as one is available during normal operating hours. Shall I submit that callback request?',
+          'Your callback request is saved. One of our sales representatives will call you as soon as they become available during normal operating hours.',
+        ][callbackStep];
         const text =
           closingText ??
           greeting ??
+          (callbackStep ? callbackText : undefined) ??
           'Hello! How can I help?' +
             (options.toolCalls
               ? ` Available floor plans: ${floorPlans.map((plan) => plan.name).join(', ')}. Available tour slots: ${appointments.map((slot) => slot.startsAt).join(', ')}.${[...results.values()].some((value) => value.ok && value.result?.available === false) ? ' No sales director is available.' : ''}`
@@ -303,6 +348,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
             response: { id, status: 'completed' },
           }),
         );
+        if (callbackStep) callbackReadyAt = Date.now() + 600;
         if (greeting) responded = false;
       }
     });

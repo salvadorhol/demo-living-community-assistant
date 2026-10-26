@@ -118,9 +118,11 @@ async function write(
         return;
       }
     } else if (
-      typeof wanted.preferredTime !== 'string' ||
-      !wanted.preferredTime.trim() ||
-      wanted.preferredTime.length > 200 ||
+      // Legacy socket deployments may still supply preferredTime. New callbacks omit it.
+      (wanted.preferredTime !== undefined &&
+        (typeof wanted.preferredTime !== 'string' ||
+          !wanted.preferredTime.trim() ||
+          wanted.preferredTime.length > 200)) ||
       wanted.slotId !== undefined ||
       wanted.date !== undefined
     ) {
@@ -166,8 +168,10 @@ async function write(
         const current = await transaction.get(session);
         if (
           !validProfile(current.get('contact.profile')) ||
-          (!current.get('contact.profile.email') &&
-            !current.get('contact.profile.phone'))
+          (object(wanted) && wanted.kind === 'callback'
+            ? !current.get('contact.profile.phone')
+            : !current.get('contact.profile.email') &&
+              !current.get('contact.profile.phone'))
         )
           throw new Error('CONTACT_REQUIRED');
         if (

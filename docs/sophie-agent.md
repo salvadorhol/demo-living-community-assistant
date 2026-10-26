@@ -2,7 +2,7 @@
 
 Sophie uses the existing Realtime voice model with a modular behavioral prompt.
 `assignment.md` is the source for the canonical community cards and room layouts.
-Availability and community responses omit mock markers. The appointment sales-handoff explicitly announces that it is a demo simulation.
+Availability and community responses omit mock markers. Callbacks save pending requests without scheduling a call.
 The prompt describes how to converse and when to use tools; it does not duplicate
 the pricing table or full amenities list. There is no model fine-tuning, preview
 product, production monitoring, or extra validation agent in this iteration.
@@ -37,14 +37,22 @@ Configured slots may include Sundays. Selected slots are
 revalidated transactionally when a pending request is saved and do not reserve
 inventory.
 
-If a successful lookup is empty, or the visitor explicitly cannot attend any
-option, Sophie calls `simulate_sales_handoff`. The server supplies a fixed
-English/Spanish disclosure identifying the simulation, stops microphone capture,
-and finishes the call after closing playback is acknowledged (15-second fallback).
-No actual transfer or callback happens. The recording and transcript are saved
-with `endReason: demo_sales_handoff`. Lookup failures offer retry instead of being
-treated as empty schedules. The greeting and recording disclosure still occur
-once per call and survive Pause/Resume.
+If a successful lookup is empty, or none of the offered options suit the visitor,
+Sophie offers an optional callback rather than transferring or automatically ending.
+Callbacks require a confirmed saved phone number; email alone remains sufficient
+for a tour request. The visitor may decline and continue asking questions.
+Callback preparation takes only `{kind: "callback"}` and reads back the arrangement:
+a sales representative will call as soon as one is available during normal operating
+hours. Sophie never asks for or offers callback dates, times, or deadlines, and does
+not invent operating hours. A volunteered time is not recorded as an agreed schedule;
+she checks whether the standard arrangement works instead.
+
+Only after separate request confirmation and a successful write does Sophie say the
+callback request is saved and explain the arrangement. This demo does not place calls
+or notify staff. Legacy saved requests/receipts remain intact, and the Cloud Function
+still accepts an optional legacy `preferredTime` for older socket deployments; new
+tools never supply it. Lookup failures remain errors rather than empty availability.
+The normal explicit-stop and natural-ending flows remain available throughout.
 
 ## Session memory and action confirmation
 
@@ -113,9 +121,9 @@ migration for customized six-section prompts.
 
 Foreground tool descriptions require a brief courtesy notice, followed immediately
 by invocation without awaiting a visitor reply. Background profile prefetch is exempt.
-A successful empty appointment lookup forces the disclosed handoff; lookup errors
-remain errors. A bounded extra terminal execution remains available after the
-four normal tool executions per turn.
+A successful empty appointment lookup offers an optional callback; lookup errors
+remain errors. A bounded extra terminal execution for call ending remains available
+after the four normal tool executions per turn.
 
 `end_call` handles explicit visitor stops immediately, without courtesy or goodbye,
 clearing capture and playback before saving. Natural completion follows the final

@@ -138,16 +138,70 @@ try {
       uid: other,
       requestId: id('no-contact-' + uid),
       confirmed: true,
-      request: { kind: 'callback', preferredTime: 'Tomorrow afternoon' },
+      request: { kind: 'callback' },
     },
     409,
   );
+  // A tour may use email alone; a telephone callback requires a saved phone.
+  await call(
+    'createFollowUpRequest',
+    {
+      uid,
+      requestId: id('email-only-callback-' + uid),
+      confirmed: true,
+      request: { kind: 'callback' },
+    },
+    409,
+  );
+  await call('saveContactInformation', {
+    uid,
+    requestId: id('phone-' + uid),
+    confirmed: true,
+    profile: { phone: '7045550100' },
+  });
   await call('createFollowUpRequest', {
     uid,
     requestId: id('callback-' + uid),
     confirmed: true,
-    request: { kind: 'callback', preferredTime: 'Tomorrow afternoon' },
+    request: { kind: 'callback' },
   });
+  const callbackBody = {
+    uid,
+    requestId: id('callback-' + uid),
+    confirmed: true,
+    request: { kind: 'callback' },
+  };
+  assert.equal(
+    (await call('createFollowUpRequest', callbackBody)).status,
+    'pending',
+  );
+  const savedCallback = (
+    await db
+      .doc(`sessions/${uid}/followUpRequests/${callbackBody.requestId}`)
+      .get()
+  ).data();
+  assert.equal(savedCallback.kind, 'callback');
+  assert.equal(Object.hasOwn(savedCallback, 'preferredTime'), false);
+  // Preserve old receipts and accept a legacy optional preferredTime on new writes.
+  const legacyBody = {
+    ...callbackBody,
+    requestId: id('legacy-time-' + uid),
+    request: { kind: 'callback', preferredTime: 'Tomorrow afternoon' },
+  };
+  const legacyResult = await call('createFollowUpRequest', legacyBody);
+  assert.deepEqual(
+    await call('createFollowUpRequest', legacyBody),
+    legacyResult,
+  );
+  await call(
+    'createFollowUpRequest',
+    {
+      ...callbackBody,
+      requestId: id('invalid-time-' + uid),
+      request: { kind: 'callback', preferredTime: 123 },
+    },
+    400,
+  );
   for (const legacy of [false, true]) {
     await db.doc(`sessions/${uid}`).update({ 'contact.consent': legacy });
     const remembered = await call('getContactInformation', { uid });
@@ -157,7 +211,7 @@ try {
       uid,
       requestId: id(`legacy-${legacy}-${uid}`),
       confirmed: true,
-      request: { kind: 'callback', preferredTime: 'Tomorrow afternoon' },
+      request: { kind: 'callback' },
     });
   }
   for (const category of [

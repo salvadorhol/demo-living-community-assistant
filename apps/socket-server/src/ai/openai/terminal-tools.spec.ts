@@ -5,9 +5,7 @@ import {silentLogger} from '../../logger.ts';
 
 function fixture() {
   let action: TerminalAction | undefined;
-  let empty = false;
   const lookup = vi.fn(async () => {
-    empty = true;
     return [];
   });
   const entry = (
@@ -27,21 +25,16 @@ function fixture() {
     [
       entry('lookup', lookup),
       entry(
-        'simulate_sales_handoff',
-        async () => {
-          action = {
-            reason: 'demo_sales_handoff',
-            immediate: false,
-            message: 'Demo goodbye',
-          };
-          return {};
-        },
-        true
-      ),
-      entry(
         'end_call',
-        async () => {
-          action = {reason: 'visitor_requested', immediate: true};
+        async args => {
+          action =
+            args.reason === 'conversation_complete'
+              ? {
+                  reason: 'conversation_complete',
+                  immediate: false,
+                  message: 'Goodbye',
+                }
+              : {reason: 'visitor_requested', immediate: true};
           return {};
         },
         true
@@ -49,8 +42,7 @@ function fixture() {
     ],
     {
       terminalAction: () => action,
-      toolChoice: () =>
-        empty ? {type: 'function', name: 'simulate_sales_handoff'} : 'auto',
+      toolChoice: () => 'auto',
     }
   );
   const send = vi.fn();
@@ -65,7 +57,7 @@ function fixture() {
     onClosing,
     fail,
   });
-  const complete = (id: string, names: string[]) =>
+  const complete = (id: string, names: string[], args = {}) =>
     tools.complete({
       id,
       status: 'completed',
@@ -73,12 +65,12 @@ function fixture() {
         type: 'function_call',
         call_id: `${id}-${i}`,
         name,
-        arguments: '{}',
+        arguments: JSON.stringify(args),
       })),
     });
   return {complete, send, onClosing, fail, lookup};
 }
-it('reserves a terminal execution after four lookups and keeps forced handoff enabled', async () => {
+it('reserves a call ending after four normal tool executions', async () => {
   const f = fixture();
   f.complete('lookups', ['lookup', 'lookup', 'lookup', 'lookup']);
   await vi.waitFor(() =>
@@ -86,15 +78,12 @@ it('reserves a terminal execution after four lookups and keeps forced handoff en
       expect.objectContaining({type: 'response.create'})
     )
   );
-  expect(f.send.mock.calls.at(-1)?.[0].response.tool_choice).toEqual({
-    type: 'function',
-    name: 'simulate_sales_handoff',
-  });
-  f.complete('close', ['simulate_sales_handoff']);
+  expect(f.send.mock.calls.at(-1)?.[0].response.tool_choice).toBe('none');
+  f.complete('close', ['end_call'], {reason: 'conversation_complete'});
   await vi.waitFor(() => expect(f.onClosing).toHaveBeenCalled());
   expect(f.send.mock.calls.at(-1)?.[0].response).toMatchObject({
     tool_choice: 'none',
-    instructions: expect.stringContaining('Demo goodbye'),
+    instructions: expect.stringContaining('Goodbye'),
   });
   expect(f.fail).not.toHaveBeenCalled();
 });
