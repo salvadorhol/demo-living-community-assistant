@@ -59,6 +59,7 @@ export interface TranscriptUpdate {
 
 export type CallEndReason =
   | 'demo_sales_handoff'
+  | 'demo_manager_handoff'
   | 'visitor_requested'
   | 'conversation_complete'
   | 'prompt_injection'

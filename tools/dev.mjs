@@ -1,3 +1,4 @@
+import { persistLocalAppointments } from './local-appointments.mjs';
 import { seedSophiePrompt } from './seed-sophie-prompt.mjs';
 import { waitForEmulators } from './emulator-readiness.mjs';
 import { readFileSync } from 'node:fs';
@@ -8,6 +9,7 @@ const require = createRequire(import.meta.url);
 const nx = require.resolve('nx/bin/nx.js');
 let stopping;
 let emulators, watcher, socket, web;
+let stopAppointments;
 const readiness = new AbortController();
 function start(name, args, env = process.env) {
   const child = spawn(process.execPath, args, {
@@ -73,7 +75,11 @@ function stop() {
     readiness.abort();
     await Promise.all([terminate(web), terminate(watcher)]);
     await terminate(socket);
-    await terminate(emulators, false);
+    try {
+      await stopAppointments?.();
+    } finally {
+      await terminate(emulators, false);
+    }
   })());
 }
 process.on('SIGINT', () => void stop());
@@ -109,6 +115,11 @@ try {
   });
   readiness.signal.throwIfAborted();
   process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+  stopAppointments = await persistLocalAppointments();
+  if (readiness.signal.aborted) {
+    await stopAppointments();
+    throw readiness.signal.reason;
+  }
   await seedSophiePrompt({ projectId: 'demo-living-community-assistant' });
   console.log(
     JSON.stringify({ service: 'dev-launcher', event: 'emulators.ready' }),

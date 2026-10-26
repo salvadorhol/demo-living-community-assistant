@@ -25,7 +25,11 @@ Add `OPENAI_API_KEY` there too if you want local AI call reviews. Keep keys and 
 npm run dev
 ```
 
-Open http://localhost:4200; use `/admin` for configuration and `/admin/review` for saved calls. The launcher starts the frontend, socket server, and Firebase emulators with the committed demo configuration. No cloud project is required. It seeds the local prompt and preserves emulator data in gitignored `firebase-emulator-data/`; stop with Ctrl-C and wait for export to finish.
+Open http://localhost:4200; use `/admin` for configuration and `/admin/review` for saved calls. The launcher starts the frontend, socket server, and Firebase emulators with the committed demo configuration. No cloud project is required. It seeds the local prompt and preserves emulator data in gitignored `firebase-emulator-data/`; stop with Ctrl-C and wait for export to finish. Appointment settings are also backed up as they change to gitignored `firebase-local-config/appointments.json`. On startup, the launcher restores that backup if the imported appointment document is missing or older, preserving slots, revision, editor, and timestamp. An explicit empty schedule (`[]`) is preserved too. No appointment slots are invented on first launch.
+
+The appointment backup works independently of shutdown exports. Restart the dev launcher once after updating these scripts to enable continuous backups. To intentionally reset local appointment configuration, stop development, remove `firebase-local-config/appointments.json`, and clear the appointment document from the imported emulator data; saving `[]` through Admin is the normal way to mark no availability. Other emulator data still relies on a clean shutdown/export.
+
+Verify restart persistence with `node tools/test-emulator-persistence.mjs`; it uses a separate demo project and free ports, including a restart from an intentionally outdated export.
 
 ## Common commands
 
@@ -66,6 +70,20 @@ See [Sophie behavior and prompt publication](docs/sophie-agent.md) for the curre
 
 ### Voice injection checks
 
-Production socket-server calls check each nonempty final user transcription with OpenAI Decisions (`gpt-6-luna`) using `OPENAI_API_KEY`; the API project must have access to this model. Set `INJECTION_THRESHOLD` (0–1, default `0.8`) and `DECISIONS_TIMEOUT_MS` (1–30000, default `2000`). Each check includes at most three preceding user utterances, with preceding context limited to 12,000 characters. The current utterance is preserved in full.
+Production socket-server calls check each nonempty final user transcription with OpenAI Decisions (`gpt-6-luna`) using `OPENAI_API_KEY`; the API project must have access to this model. Set `INJECTION_THRESHOLD` (0–1, default `0.8`) and `DECISIONS_TIMEOUT_MS` (1–30000, default `2000`). Each check includes at most six preceding user and assistant utterances, with preceding context limited to 12,000 characters. The current utterance is preserved in full.
 
 A detected instruction attack immediately stops capture and playback and saves the call with `prompt_injection`. Decisions errors, timeouts (including queue time), and transcription failures stop it with `guardrail_unavailable`. The UI retains a warning until the next call. The socket remains connected. Checks are asynchronous: the voice assistant can respond or execute tools before the final transcript verdict. The threshold is an initial default that should be calibrated on labeled English/Spanish examples. Monitor `guardrail.verdict` latency/probability and `guardrail.failed` categories without transcript logging. Deploy the server and UI together.
+
+### Automatic manager handoff
+
+The same Decisions request also checks `user_frustrated` and selects English or Spanish. Set `FRUSTRATION_THRESHOLD` (0–1, default `0.8`) to tune the trigger. Clear frustration, repeated dissatisfaction, and explicit manager requests trigger a simulated transfer; mild confusion, quotations, and unrelated distress should not. Recent finalized user and assistant utterances supply context (at most six preceding utterances and 12,000 characters total). Prompt injection takes priority.
+
+On escalation, the server stops microphone input, interrupts the current reply, aborts pending tools, and plays a fixed English/Spanish disclosure that the manager transfer is simulated. It saves the call as `demo_manager_handoff` after playback, or after a 15-second fallback timeout. A visitor end request stops playback immediately; an injection verdict can override the handoff. This does not connect to a real manager and does not change the Firebase prompt. Deploy server and UI together.
+
+Calibrate with the synthetic labeled English/Spanish cases before rollout. This command explicitly calls the live Decisions API using the socket-server environment file (or an exported `OPENAI_API_KEY`):
+
+```sh
+node --env-file-if-exists=apps/socket-server/.env apps/socket-server/src/testing/evaluate-frustration.ts
+```
+
+The evaluator reports per-case probabilities, language, and pass/fail without printing transcript text or credentials. These examples are an initial regression set, not a guarantee of classification accuracy. Normal unit/integration tests use deterministic fake verdicts and never call OpenAI.

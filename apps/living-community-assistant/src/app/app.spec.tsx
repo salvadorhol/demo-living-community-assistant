@@ -1,13 +1,18 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import type { TranscriptUpdate } from '@living-community-assistant/types';
-import { Workspace as App } from './app';
-import type { ConnectionStatus } from './api/socket';
-import type { VoiceStatus } from './audio/voice';
-vi.mock('./api/session', () => ({ lockApp: vi.fn(async () => undefined) }));
+import {act, fireEvent, render, screen} from '@testing-library/react';
+import type {
+  TranscriptUpdate,
+  CallStatus,
+} from '@living-community-assistant/types';
+import {Workspace as App} from './app';
+import type {ConnectionStatus} from './api/socket';
+import type {VoiceStatus} from './audio/voice';
+vi.mock('./api/session', () => ({lockApp: vi.fn(async () => undefined)}));
 
 const mocks = vi.hoisted(() => ({
   supported: true,
   status: undefined as unknown as (status: ConnectionStatus) => void,
+  callStatus: undefined as unknown as (status: CallStatus) => void,
+  finishClosing: vi.fn(),
   transcript: undefined as unknown as (update: TranscriptUpdate) => void,
   voiceStatus: undefined as unknown as (status: VoiceStatus) => void,
   close: vi.fn(),
@@ -21,8 +26,12 @@ vi.mock('./audio/capture', () => ({
   microphoneSupported: () => mocks.supported,
 }));
 vi.mock('./api/socket', () => ({
-  startSocket: (callback: typeof mocks.status) => {
+  startSocket: (
+    callback: typeof mocks.status,
+    onCall: typeof mocks.callStatus
+  ) => {
     mocks.status = callback;
+    mocks.callStatus = onCall;
     return Object.assign(mocks.close, {
       onTranscript: (listener: typeof mocks.transcript) => {
         mocks.transcript = listener;
@@ -38,6 +47,7 @@ vi.mock('./audio/voice', () => ({
     }
     start = mocks.start;
     stop = mocks.stop;
+    finishClosing = mocks.finishClosing;
     disconnect = mocks.disconnect;
     dispose = mocks.dispose;
   },
@@ -53,12 +63,12 @@ it('shows minimal socket states, retries, and cleans up the previous connection'
     name: 'Socket connection status',
   });
   expect(indicator.textContent).toContain('Connecting');
-  act(() => mocks.status({ state: 'connected' }));
+  act(() => mocks.status({state: 'connected'}));
   expect(indicator.textContent).toContain('Socket on');
-  act(() => mocks.status({ state: 'disconnected', error: 'Sign-in failed.' }));
+  act(() => mocks.status({state: 'disconnected', error: 'Sign-in failed.'}));
   expect(indicator.textContent).toContain('Socket off');
   expect(screen.getByRole('alert').textContent).toContain('Sign-in failed');
-  fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
+  fireEvent.click(screen.getByRole('button', {name: 'Retry connection'}));
   expect(mocks.close).toHaveBeenCalledTimes(1);
   expect(mocks.unsubscribe).toHaveBeenCalledTimes(1);
   view.unmount();
@@ -68,31 +78,31 @@ it('shows minimal socket states, retries, and cleans up the previous connection'
 it('starts and stops a session and keeps the actual microphone label', () => {
   render(<App />);
   expect(
-    (screen.getByRole('button', { name: /Start session/ }) as HTMLButtonElement)
-      .disabled,
+    (screen.getByRole('button', {name: /Start session/}) as HTMLButtonElement)
+      .disabled
   ).toBe(true);
-  act(() => mocks.status({ state: 'connected' }));
-  fireEvent.click(screen.getByRole('button', { name: /Start session/ }));
+  act(() => mocks.status({state: 'connected'}));
+  fireEvent.click(screen.getByRole('button', {name: /Start session/}));
   expect(mocks.start).toHaveBeenCalledOnce();
-  act(() => mocks.voiceStatus({ state: 'requesting permission' }));
+  act(() => mocks.voiceStatus({state: 'requesting permission'}));
   expect(
-    screen.getByRole('status', { name: 'Microphone status' }).textContent,
+    screen.getByRole('status', {name: 'Microphone status'}).textContent
   ).toContain('permission');
   act(() =>
     mocks.voiceStatus({
       state: 'streaming',
       microphoneName: 'Studio microphone',
-    }),
+    })
   );
   expect(screen.getByText('Studio microphone')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: /Pause/ }));
+  fireEvent.click(screen.getByRole('button', {name: /Pause/}));
   expect(mocks.stop).toHaveBeenCalledOnce();
-  act(() => mocks.voiceStatus({ state: 'stopping' }));
+  act(() => mocks.voiceStatus({state: 'stopping'}));
   expect(
-    (screen.getByRole('button', { name: /Stopping/ }) as HTMLButtonElement)
-      .disabled,
+    (screen.getByRole('button', {name: /Stopping/}) as HTMLButtonElement)
+      .disabled
   ).toBe(true);
-  act(() => mocks.voiceStatus({ state: 'idle' }));
+  act(() => mocks.voiceStatus({state: 'idle'}));
   expect(screen.getByText('Studio microphone')).toBeTruthy();
 });
 
@@ -100,11 +110,11 @@ it('shows permission failures and unsupported microphone guidance', () => {
   mocks.supported = false;
   render(<App />);
   expect(
-    (screen.getByRole('button', { name: /Start session/ }) as HTMLButtonElement)
-      .disabled,
+    (screen.getByRole('button', {name: /Start session/}) as HTMLButtonElement)
+      .disabled
   ).toBe(true);
   expect(screen.getByText(/requires Web Audio/)).toBeTruthy();
-  act(() => mocks.voiceStatus({ state: 'error', error: 'Permission denied' }));
+  act(() => mocks.voiceStatus({state: 'error', error: 'Permission denied'}));
   expect(screen.getByText('Permission denied')).toBeTruthy();
 });
 
@@ -112,22 +122,22 @@ it('replaces partial transcripts, preserves order and finals, and preserves ende
   const view = render(<App />);
   const update = (value: TranscriptUpdate) =>
     act(() => mocks.transcript(value));
-  update({ id: 'u', role: 'user', text: 'Hel', isFinal: false });
-  update({ id: 'a', role: 'assistant', text: 'Hi', isFinal: true });
-  update({ id: 'u', role: 'user', text: 'Hello', isFinal: true });
-  update({ id: 'u', role: 'user', text: 'late', isFinal: false });
+  update({id: 'u', role: 'user', text: 'Hel', isFinal: false});
+  update({id: 'a', role: 'assistant', text: 'Hi', isFinal: true});
+  update({id: 'u', role: 'user', text: 'Hello', isFinal: true});
+  update({id: 'u', role: 'user', text: 'late', isFinal: false});
   expect(screen.queryByText('Hel')).toBeNull();
   expect(screen.queryByText('late')).toBeNull();
   expect(
-    screen.getAllByRole('article').map((entry) => entry.textContent),
+    screen.getAllByRole('article').map(entry => entry.textContent)
   ).toEqual(['AssistantHi', 'YouHello']);
-  act(() => mocks.voiceStatus({ state: 'idle' }));
+  act(() => mocks.voiceStatus({state: 'idle'}));
   expect(screen.getByText('Hello')).toBeTruthy();
-  act(() => mocks.status({ state: 'disconnected' }));
+  act(() => mocks.status({state: 'disconnected'}));
   expect(screen.getAllByRole('article')).toHaveLength(2);
   const stale = mocks.transcript;
-  fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
-  act(() => stale({ id: 'late', role: 'user', text: 'stale', isFinal: true }));
+  fireEvent.click(screen.getByRole('button', {name: 'Retry connection'}));
+  act(() => stale({id: 'late', role: 'user', text: 'stale', isFinal: true}));
   expect(screen.queryByText('stale')).toBeNull();
   view.unmount();
 });
@@ -165,7 +175,7 @@ it('shows newest utterances first using conversation order, including delayed tr
     isFinal: true,
   });
   expect(
-    screen.getAllByRole('article').map((entry) => entry.textContent),
+    screen.getAllByRole('article').map(entry => entry.textContent)
   ).toEqual([
     'AssistantLatest reply complete',
     'YouNext question',
@@ -184,7 +194,7 @@ it('shows the server message time in each bubble and tolerates older messages wi
       text: 'Hello',
       isFinal: false,
       createdAt,
-    }),
+    })
   );
   act(() =>
     mocks.transcript({
@@ -193,7 +203,7 @@ it('shows the server message time in each bubble and tolerates older messages wi
       text: 'Hi',
       isFinal: true,
       createdAt,
-    }),
+    })
   );
   const entries = screen.getAllByRole('article');
   for (const entry of entries) {
@@ -203,7 +213,7 @@ it('shows the server message time in each bubble and tolerates older messages wi
       new Date(createdAt).toLocaleTimeString([], {
         hour: 'numeric',
         minute: '2-digit',
-      }),
+      })
     );
     expect(time?.title).toBe(new Date(createdAt).toLocaleString());
   }
@@ -213,9 +223,43 @@ it('shows the server message time in each bubble and tolerates older messages wi
       role: 'user',
       text: 'Older message',
       isFinal: true,
-    }),
+    })
   );
   expect(
-    screen.getByText('Older message').closest('article')?.querySelector('time'),
+    screen.getByText('Older message').closest('article')?.querySelector('time')
   ).toBeNull();
+});
+
+it('shows the simulated manager transfer through closing and saved states', () => {
+  render(<App />);
+  act(() => {
+    mocks.status({state: 'connected'});
+    mocks.callStatus({callId: 'manager', state: 'active'});
+  });
+  act(() => {
+    mocks.callStatus({
+      callId: 'manager',
+      state: 'closing',
+      endReason: 'demo_manager_handoff',
+    });
+    mocks.voiceStatus({state: 'closing'});
+  });
+  expect(screen.getByRole('status', {name: 'Call status'}).textContent).toBe(
+    'Simulating manager transfer…'
+  );
+  expect(
+    screen.getByRole('status', {name: 'Microphone status'}).textContent
+  ).toBe('Simulating manager transfer…');
+  act(() => {
+    mocks.callStatus({
+      callId: 'manager',
+      state: 'saved',
+      endReason: 'demo_manager_handoff',
+    });
+    mocks.voiceStatus({state: 'idle'});
+  });
+  expect(screen.getByRole('status', {name: 'Call status'}).textContent).toBe(
+    'Simulated manager transfer complete. Call ended and saved.'
+  );
+  expect(mocks.finishClosing).toHaveBeenCalledOnce();
 });

@@ -30,8 +30,15 @@ interpreted in America/New_York, with thirty-minute durations. The admin page
 edits a JSON array of date/time objects; the service returns future slots in
 chronological order without generating business hours or asking for a date first.
 The first substantive inquiry, including tours, attempts the sales-director lookup.
-Community, floor-plan, and appointment tools remain gated until that attempt
-finishes, including failure. Then appointment options are retrieved immediately.
+Community-information, floor-plan, and appointment tools remain visible from call
+start. If Sophie requests one before the initial director check, the server
+performs that prerequisite automatically, shares any in-flight attempt, and then
+runs the requested lookup. A failed or timed-out director attempt counts as
+attempted and is reported as unknown availability; it does not block community
+facts. Later lookups reuse the attempt unless an explicit director recheck is
+requested. The combined lookup deadline is 30 seconds, including a bounded
+20-second director attempt. Appointment options are retrieved immediately after
+the attempt finishes.
 Configured slots may include Sundays. Selected slots are
 revalidated transactionally when a pending request is saved and do not reserve
 inventory.

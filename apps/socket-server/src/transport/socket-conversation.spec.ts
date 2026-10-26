@@ -32,7 +32,16 @@ let outputs: ((event: AudioOutputEvent) => void)[];
 let logs: string[];
 let guardrail: InjectionGuardrail;
 beforeEach(async () => {
-  guardrail = {threshold: 0.8, timeoutMs: 2000, check: vi.fn(async () => 0)};
+  guardrail = {
+    threshold: 0.8,
+    frustrationThreshold: 0.8,
+    timeoutMs: 2000,
+    check: vi.fn(async () => ({
+      promptInjectionProbability: 0,
+      frustrationProbability: 0,
+      language: 'en' as const,
+    })),
+  };
   logs = [];
   agents = [];
   outputs = [];
@@ -288,7 +297,11 @@ it('catches factory configuration exceptions and surfaces safe event and acknowl
 });
 
 it('delivers an injection warning before closing and saves without disconnecting', async () => {
-  guardrail.check = vi.fn(async () => 1);
+  guardrail.check = vi.fn(async () => ({
+    promptInjectionProbability: 1,
+    frustrationProbability: 0,
+    language: 'en' as const,
+  }));
   const socket = await client();
   await socket
     .timeout(1000)

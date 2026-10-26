@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import {useEffect, useRef, useState} from 'react';
 import type {
   TranscriptUpdate,
   CallStatus,
 } from '@living-community-assistant/types';
-import { startSocket, type ConnectionStatus } from './api/socket';
-import { VoiceSession, type VoiceStatus } from './audio/voice';
-import { microphoneSupported } from './audio/capture';
+import {startSocket, type ConnectionStatus} from './api/socket';
+import {VoiceSession, type VoiceStatus} from './audio/voice';
+import {microphoneSupported} from './audio/capture';
 import styles from './app.module.scss';
-import { AccessGate } from './access-gate';
-import { lockApp } from './api/session';
-import { Routes, Route } from 'react-router-dom';
-import { AdminPage } from './admin-page';
+import {AccessGate} from './access-gate';
+import {lockApp} from './api/session';
+import {Routes, Route} from 'react-router-dom';
+import {AdminPage} from './admin-page';
 
 function MicrophoneIcon() {
   return (
@@ -72,7 +72,7 @@ export function Workspace() {
     let disposed = false;
     setTranscripts([]);
     const connection = startSocket(
-      (status) => {
+      status => {
         if (disposed) return;
         setSocketStatus(status);
         if (status.state !== 'connected') voice.current?.disconnect();
@@ -81,7 +81,7 @@ export function Workspace() {
           callId.current = undefined;
         }
       },
-      (status) => {
+      status => {
         if (disposed) return;
         if (status.state === 'active' && callId.current !== status.callId) {
           callId.current = status.callId;
@@ -92,15 +92,15 @@ export function Workspace() {
           if (['saving', 'saved', 'failed'].includes(status.state))
             voice.current?.finishClosing();
         }
-      },
+      }
     );
-    const unsubscribe = connection.onTranscript((update) => {
+    const unsubscribe = connection.onTranscript(update => {
       if (disposed) return;
-      setTranscripts((entries) => {
-        const index = entries.findIndex((entry) => entry.id === update.id);
+      setTranscripts(entries => {
+        const index = entries.findIndex(entry => entry.id === update.id);
         if (index === -1)
           return [...entries, update].sort(
-            (a, b) => (a.order ?? 0) - (b.order ?? 0),
+            (a, b) => (a.order ?? 0) - (b.order ?? 0)
           );
         if (
           update.revision !== undefined &&
@@ -114,14 +114,14 @@ export function Workspace() {
     });
     const session = new VoiceSession(
       connection,
-      (status) => {
+      status => {
         if (disposed) return;
         setVoiceStatus(status);
         if (status.microphoneName) setMicrophoneName(status.microphoneName);
       },
-      (issue) => {
+      issue => {
         if (!disposed) setPlaybackIssue(issue);
-      },
+      }
     );
     voice.current = session;
     return () => {
@@ -166,7 +166,7 @@ export function Workspace() {
             className={styles['textButton']}
             onClick={() => {
               void lockApp().catch(() =>
-                setCallError('Could not sign out. Please retry.'),
+                setCallError('Could not sign out. Please retry.')
               );
             }}
           >
@@ -186,7 +186,7 @@ export function Workspace() {
           {socketStatus.state === 'disconnected' && (
             <button
               className={styles['textButton']}
-              onClick={() => setAttempt((value) => value + 1)}
+              onClick={() => setAttempt(value => value + 1)}
             >
               Retry connection
             </button>
@@ -226,7 +226,7 @@ export function Workspace() {
                   void voice.current
                     ?.end()
                     .catch(() =>
-                      setCallError('Could not end call. Please retry.'),
+                      setCallError('Could not end call. Please retry.')
                     );
                 }}
               >
@@ -244,9 +244,11 @@ export function Workspace() {
             aria-label="Microphone status"
           >
             {voiceStatus.state === 'closing'
-              ? call?.endReason === 'demo_sales_handoff'
-                ? 'Finishing the simulated sales transfer…'
-                : 'Ending the call…'
+              ? call?.endReason === 'demo_manager_handoff'
+                ? 'Simulating manager transfer…'
+                : call?.endReason === 'demo_sales_handoff'
+                  ? 'Finishing the simulated sales transfer…'
+                  : 'Ending the call…'
               : pending
                 ? voiceStatus.state === 'requesting permission'
                   ? 'Waiting for microphone permission…'
@@ -266,26 +268,31 @@ export function Workspace() {
           {call && (
             <p role="status" aria-label="Call status">
               {call.state === 'closing'
-                ? call.endReason === 'demo_sales_handoff'
-                  ? 'Demo sales transfer · Ending call…'
-                  : 'Ending call…'
+                ? call.endReason === 'demo_manager_handoff'
+                  ? 'Simulating manager transfer…'
+                  : call.endReason === 'demo_sales_handoff'
+                    ? 'Demo sales transfer · Ending call…'
+                    : 'Ending call…'
                 : call.state === 'saved' &&
-                    call.endReason === 'demo_sales_handoff'
-                  ? 'Demo transfer complete. Call ended and saved.'
+                    call.endReason === 'demo_manager_handoff'
+                  ? 'Simulated manager transfer complete. Call ended and saved.'
                   : call.state === 'saved' &&
-                      ['visitor_requested', 'conversation_complete'].includes(
-                        call.endReason ?? '',
-                      )
-                    ? 'Call ended and saved.'
-                    : call.state === 'saving'
-                      ? 'Saving call…'
-                      : call.state === 'saved'
-                        ? 'Call saved'
-                        : call.state === 'failed'
-                          ? 'Save failed'
-                          : call.state === 'paused'
-                            ? 'Call paused'
-                            : 'Call active'}
+                      call.endReason === 'demo_sales_handoff'
+                    ? 'Demo transfer complete. Call ended and saved.'
+                    : call.state === 'saved' &&
+                        ['visitor_requested', 'conversation_complete'].includes(
+                          call.endReason ?? ''
+                        )
+                      ? 'Call ended and saved.'
+                      : call.state === 'saving'
+                        ? 'Saving call…'
+                        : call.state === 'saved'
+                          ? 'Call saved'
+                          : call.state === 'failed'
+                            ? 'Save failed'
+                            : call.state === 'paused'
+                              ? 'Call paused'
+                              : 'Call active'}
             </p>
           )}
           {call?.message && <p role="alert">{call.message}</p>}
@@ -328,7 +335,7 @@ export function Workspace() {
             <div className={styles['empty']}>
               <div className={styles['wave']} aria-hidden="true">
                 {[12, 24, 36, 20, 30, 16, 10].map((height, i) => (
-                  <span key={i} style={{ height }} />
+                  <span key={i} style={{height}} />
                 ))}
               </div>
               <p>Your conversation will appear here</p>
@@ -343,7 +350,7 @@ export function Workspace() {
               aria-live="polite"
               aria-relevant="additions text"
             >
-              {[...transcripts].reverse().map((entry) => (
+              {[...transcripts].reverse().map(entry => (
                 <article
                   key={entry.id}
                   className={`${styles['entry']} ${styles[entry.role]} ${!entry.isFinal ? styles['partial'] : ''}`}

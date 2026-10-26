@@ -320,12 +320,19 @@ it.each([false, true])(
     const registry = createSophieTools(config, 'owner', {invoke});
     expect(
       await registry.execute(call('get_available_appointments'), context)
-    ).toMatchObject({ok: false});
-    expect(invoke).not.toHaveBeenCalled();
-    await registry.execute(call('check_sales_director_availability'), context);
+    ).toMatchObject({ok: true, result: {appointments: []}});
+    expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+      'checkSalesDirectorAvailability',
+      'getAvailableAppointments',
+    ]);
     expect(
       await registry.execute(call('get_available_appointments'), context)
     ).toMatchObject({ok: true, result: {appointments: []}});
+    expect(
+      invoke.mock.calls.filter(
+        ([name]) => name === 'checkSalesDirectorAvailability'
+      )
+    ).toHaveLength(1);
     expect(registry.toolChoice?.()).toBe('auto');
     expect(registry.terminalAction?.()).toBeUndefined();
     expect(registry.definitions.map(t => t.name)).toContain(
@@ -553,4 +560,267 @@ it('natural ending selects a server goodbye without claiming a transfer', async 
     message: expect.stringContaining('Gracias'),
   });
   expect(registry.definitions).toEqual([]);
+});
+
+const communityResult = {
+  category: 'amenities',
+  facts: {amenities: ['Gym', 'Exercise pool']},
+  notProvided: [],
+};
+it('exposes community tools from call start and automatically checks the director before the requested lookup', async () => {
+  const invoke = vi.fn(async (name: string) =>
+    name === 'checkSalesDirectorAvailability'
+      ? {available: false}
+      : communityResult
+  );
+  const registry = createSophieTools(config, 'owner', {invoke});
+  expect(registry.definitions.map(tool => tool.name)).toEqual(
+    expect.arrayContaining([
+      'get_community_information',
+      'get_available_floor_plans',
+      'get_available_appointments',
+    ])
+  );
+  const result = await registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    context
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    result: {
+      ...communityResult,
+      salesDirectorAvailability: {status: 'unavailable', attempted: true},
+    },
+  });
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+    'checkSalesDirectorAvailability',
+    'getCommunityInformation',
+  ]);
+  await registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    context
+  );
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+    'checkSalesDirectorAvailability',
+    'getCommunityInformation',
+    'getCommunityInformation',
+  ]);
+});
+it.each(['failure', 'invalid'] as const)(
+  'continues community lookups after a %s director attempt without automatically repeating it',
+  async failure => {
+    const invoke = vi.fn(async (name: string) => {
+      if (name === 'checkSalesDirectorAvailability') {
+        if (failure === 'failure')
+          throw new Error('Director service unavailable');
+        return {available: 'unknown'};
+      }
+      return communityResult;
+    });
+    const registry = createSophieTools(config, 'owner', {invoke});
+    for (let i = 0; i < 2; i++) {
+      expect(
+        await registry.execute(
+          call('get_community_information', {category: 'amenities'}),
+          context
+        )
+      ).toMatchObject({
+        ok: true,
+        result: {
+          facts: communityResult.facts,
+          salesDirectorAvailability: {status: 'unknown'},
+        },
+      });
+    }
+    expect(
+      invoke.mock.calls.filter(
+        ([name]) => name === 'checkSalesDirectorAvailability'
+      )
+    ).toHaveLength(1);
+  }
+);
+it('shares the pending director attempt between concurrent community, layout, appointment and explicit director calls', async () => {
+  let release!: (value: unknown) => void;
+  const invoke = vi.fn(async (name: string) => {
+    if (name === 'checkSalesDirectorAvailability')
+      return await new Promise(resolve => {
+        release = resolve;
+      });
+    if (name === 'getAvailableFloorPlans') return {floorPlans: [], unknown: []};
+    if (name === 'getAvailableAppointments')
+      return {timeZone: 'America/New_York', appointments: []};
+    return communityResult;
+  });
+  const registry = createSophieTools(config, 'owner', {invoke});
+  const pending = [
+    registry.execute(
+      call('get_community_information', {category: 'amenities'}),
+      context
+    ),
+    registry.execute(call('get_available_floor_plans'), context),
+    registry.execute(call('get_available_appointments'), context),
+    registry.execute(call('check_sales_director_availability'), context),
+  ];
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+  expect(invoke.mock.calls[0][0]).toBe('checkSalesDirectorAvailability');
+  release({available: true});
+  const results = await Promise.all(pending);
+  expect(results.every(result => result.ok)).toBe(true);
+  expect(results[0]).toMatchObject({
+    result: {salesDirectorAvailability: {status: 'available'}},
+  });
+  expect(
+    invoke.mock.calls.filter(
+      ([name]) => name === 'checkSalesDirectorAvailability'
+    )
+  ).toHaveLength(1);
+});
+it('allows an explicit director recheck after the automatic initial attempt', async () => {
+  const invoke = vi.fn(async (name: string) =>
+    name === 'checkSalesDirectorAvailability'
+      ? {available: false}
+      : communityResult
+  );
+  const registry = createSophieTools(config, 'owner', {invoke});
+  await registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    context
+  );
+  expect(
+    await registry.execute(call('check_sales_director_availability'), context)
+  ).toMatchObject({ok: true, result: {available: false}});
+  await registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    context
+  );
+  expect(
+    invoke.mock.calls.filter(
+      ([name]) => name === 'checkSalesDirectorAvailability'
+    )
+  ).toHaveLength(2);
+});
+it('keeps the one-time director state separate for each call registry', async () => {
+  const invoke = vi.fn(async (name: string) =>
+    name === 'checkSalesDirectorAvailability'
+      ? {available: false}
+      : communityResult
+  );
+  for (let i = 0; i < 2; i++)
+    await createSophieTools(config, 'owner', {invoke}).execute(
+      call('get_community_information', {category: 'amenities'}),
+      context
+    );
+  expect(
+    invoke.mock.calls.filter(
+      ([name]) => name === 'checkSalesDirectorAvailability'
+    )
+  ).toHaveLength(2);
+});
+it('does not issue a community lookup after cancellation during the director attempt', async () => {
+  const owner = new AbortController();
+  const invoke = vi.fn(async () => new Promise(() => undefined));
+  const registry = createSophieTools(config, 'owner', {invoke});
+  const pending = registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    {...context, signal: owner.signal}
+  );
+  const rejected = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledOnce());
+  owner.abort(new Error('Visitor interrupted'));
+  await rejected;
+  await Promise.resolve();
+  expect(invoke).toHaveBeenCalledOnce();
+});
+it.each(['delayed', 'timeout'] as const)(
+  'budgets time for a %s director attempt and still retrieves community facts',
+  async mode => {
+    vi.useFakeTimers();
+    try {
+      const invoke = vi.fn(async (name: string) => {
+        if (name === 'checkSalesDirectorAvailability') {
+          if (mode === 'timeout') return await new Promise(() => undefined);
+          return await new Promise(resolve =>
+            setTimeout(() => resolve({available: false}), 12000)
+          );
+        }
+        return communityResult;
+      });
+      const registry = createSophieTools(config, 'owner', {invoke});
+      const pending = registry.execute(
+        call('get_community_information', {category: 'amenities'}),
+        context
+      );
+      await vi.advanceTimersByTimeAsync(mode === 'timeout' ? 20000 : 12000);
+      expect(await pending).toMatchObject({
+        ok: true,
+        result: {
+          facts: communityResult.facts,
+          salesDirectorAvailability: {
+            status: mode === 'timeout' ? 'unknown' : 'unavailable',
+          },
+        },
+      });
+      expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+        'checkSalesDirectorAvailability',
+        'getCommunityInformation',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+);
+it('validates community arguments before attempting the director prerequisite', async () => {
+  const invoke = vi.fn();
+  const registry = createSophieTools(config, 'owner', {invoke});
+  expect(
+    await registry.execute(
+      call('get_community_information', {category: 'invented'}),
+      context
+    )
+  ).toMatchObject({ok: false, error: {code: 'INVALID_ARGUMENT'}});
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it('does not repeat an explicit initial director check when retrieving community facts', async () => {
+  const invoke = vi.fn(async (name: string) =>
+    name === 'checkSalesDirectorAvailability'
+      ? {available: false}
+      : communityResult
+  );
+  const registry = createSophieTools(config, 'owner', {invoke});
+  await registry.execute(call('check_sales_director_availability'), context);
+  await registry.execute(
+    call('get_community_information', {category: 'amenities'}),
+    context
+  );
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+    'checkSalesDirectorAvailability',
+    'getCommunityInformation',
+  ]);
+});
+it('retries a failed community lookup without repeating the initial director attempt', async () => {
+  let attempt = 0;
+  const invoke = vi.fn(async (name: string) => {
+    if (name === 'checkSalesDirectorAvailability') return {available: false};
+    if (++attempt === 1) throw new Error('Community service unavailable');
+    return communityResult;
+  });
+  const registry = createSophieTools(config, 'owner', {invoke});
+  expect(
+    await registry.execute(
+      call('get_community_information', {category: 'amenities'}),
+      context
+    )
+  ).toMatchObject({ok: false});
+  expect(
+    await registry.execute(
+      call('get_community_information', {category: 'amenities'}),
+      context
+    )
+  ).toMatchObject({ok: true, result: {facts: communityResult.facts}});
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual([
+    'checkSalesDirectorAvailability',
+    'getCommunityInformation',
+    'getCommunityInformation',
+  ]);
 });

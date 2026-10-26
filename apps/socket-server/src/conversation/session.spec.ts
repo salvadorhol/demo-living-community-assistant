@@ -1,7 +1,10 @@
-import type {InjectionGuardrail} from '../ai/openai/injection-check.ts';
+import type {
+  InjectionGuardrail,
+  ConversationDecision,
+} from '../ai/openai/injection-check.ts';
 import {createConversationSession} from './session.ts';
 import {createLogger} from '../logger.ts';
-import type {VoiceAgentFactory} from '../ai/contracts.ts';
+import type {VoiceAgentFactory, VoiceAgent} from '../ai/contracts.ts';
 import type {
   TranscriptContext,
   TranscriptObserverFactory,
@@ -20,6 +23,9 @@ function fixture(
   let responseId: string | undefined;
   const logs: string[] = [];
   const agent = {
+    speakTerminalMessage: vi.fn<
+      NonNullable<VoiceAgent['speakTerminalMessage']>
+    >(async () => true),
     initialize: vi.fn(async () => undefined),
     beginInput: vi.fn(),
     write: vi.fn(),
@@ -344,6 +350,15 @@ it('waits for the natural goodbye before saving conversation_complete', async ()
   await f.session.close();
 });
 
+const decision = (
+  promptInjectionProbability = 0,
+  frustrationProbability = 0,
+  language: 'en' | 'es' = 'en'
+): ConversationDecision => ({
+  promptInjectionProbability,
+  frustrationProbability,
+  language,
+});
 const finalUser = (id = 'attack') => ({
   id,
   role: 'user' as const,
@@ -352,14 +367,19 @@ const finalUser = (id = 'attack') => ({
   isFinal: true,
 });
 it('checks finals once and stops immediately at the threshold after new activity and pause', async () => {
-  let resolve!: (value: number) => void;
+  let resolve!: (value: ConversationDecision) => void;
   const check = vi.fn(
     () =>
-      new Promise<number>(done => {
+      new Promise<ConversationDecision>(done => {
         resolve = done;
       })
   );
-  const f = fixture(undefined, {check, threshold: 0.8, timeoutMs: 2000});
+  const f = fixture(undefined, {
+    check,
+    threshold: 0.8,
+    frustrationThreshold: 0.8,
+    timeoutMs: 2000,
+  });
   await f.session.start(stream());
   f.provider().transcript?.({...finalUser(), isFinal: false});
   await flush();
@@ -370,7 +390,7 @@ it('checks finals once and stops immediately at the threshold after new activity
   f.response('new-response');
   f.provider().speechStarted?.();
   f.session.pause({streamId: 'microphone'});
-  resolve(0.8);
+  resolve(decision(0.8));
   await vi.waitFor(() => expect(f.agent.dispose).toHaveBeenCalledOnce());
   expect(check).toHaveBeenCalledOnce();
   const output = f.events.output.mock.calls.map(([value]) => value);
@@ -394,11 +414,16 @@ it.each(['failure', 'transcription', 'timeout'] as const)(
   async mode => {
     const check = vi.fn(async () => {
       if (mode === 'failure') throw new Error('private provider body');
-      return await new Promise<number>(() => {
+      return await new Promise<ConversationDecision>(() => {
         /* Simulate an unresponsive provider. */
       });
     });
-    const f = fixture(undefined, {check, threshold: 0.8, timeoutMs: 10});
+    const f = fixture(undefined, {
+      check,
+      threshold: 0.8,
+      frustrationThreshold: 0.8,
+      timeoutMs: 10,
+    });
     await f.session.start(stream());
     if (mode === 'transcription') f.provider().degraded?.();
     else f.provider().transcript?.(finalUser());
@@ -415,19 +440,24 @@ it.each(['failure', 'transcription', 'timeout'] as const)(
   }
 );
 it('ignores a verdict from an ended call', async () => {
-  let resolve!: (value: number) => void;
+  let resolve!: (value: ConversationDecision) => void;
   const check = vi.fn(
     () =>
-      new Promise<number>(done => {
+      new Promise<ConversationDecision>(done => {
         resolve = done;
       })
   );
-  const f = fixture(undefined, {check, threshold: 0.8, timeoutMs: 2000});
+  const f = fixture(undefined, {
+    check,
+    threshold: 0.8,
+    frustrationThreshold: 0.8,
+    timeoutMs: 2000,
+  });
   await f.session.start(stream());
   f.provider().transcript?.(finalUser());
   await flush();
   await f.session.disconnect();
-  resolve(1);
+  resolve(decision(1));
   await flush();
   expect(f.events.output).not.toHaveBeenCalledWith(
     expect.objectContaining({type: 'warning'})
@@ -435,17 +465,22 @@ it('ignores a verdict from an ended call', async () => {
 });
 
 it('serializes checks with bounded preceding context and allows benign utterances', async () => {
-  let release!: (value: number) => void;
+  let release!: (value: ConversationDecision) => void;
   const check = vi
     .fn<InjectionGuardrail['check']>()
     .mockImplementationOnce(
       () =>
-        new Promise<number>(resolve => {
+        new Promise<ConversationDecision>(resolve => {
           release = resolve;
         })
     )
-    .mockResolvedValue(0.1);
-  const f = fixture(undefined, {check, threshold: 0.8, timeoutMs: 2000});
+    .mockResolvedValue(decision(0.1));
+  const f = fixture(undefined, {
+    check,
+    threshold: 0.8,
+    frustrationThreshold: 0.8,
+    timeoutMs: 2000,
+  });
   await f.session.start(stream());
   f.provider().transcript?.({...finalUser('one'), text: 'a'.repeat(15000)});
   f.provider().transcript?.({
@@ -454,32 +489,234 @@ it('serializes checks with bounded preceding context and allows benign utterance
   });
   await flush();
   expect(check).toHaveBeenCalledOnce();
-  release(0.1);
+  release(decision(0.1));
   await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
-  expect(check.mock.calls[1][1]).toEqual(['a'.repeat(12000)]);
+  expect(check.mock.calls[1][1]).toEqual([
+    {role: 'user', text: 'a'.repeat(12000)},
+  ]);
   expect(f.agent.dispose).not.toHaveBeenCalled();
   await f.session.close();
 });
 
 it('overrides a pending natural goodbye with a safety stop', async () => {
-  let release!: (value: number) => void;
+  let release!: (value: ConversationDecision) => void;
   const f = fixture(undefined, {
     check: () =>
-      new Promise<number>(resolve => {
+      new Promise<ConversationDecision>(resolve => {
         release = resolve;
       }),
     threshold: 0.8,
+    frustrationThreshold: 0.8,
     timeoutMs: 2000,
   });
   await f.session.start(stream());
   f.provider().transcript?.(finalUser());
   await flush();
   f.provider().closing?.({reason: 'conversation_complete', immediate: false});
-  release(1);
+  release(decision(1));
   await vi.waitFor(() =>
     expect(f.events.status).toHaveBeenCalledWith(
       expect.objectContaining({state: 'saved', endReason: 'prompt_injection'})
     )
   );
   await f.session.close();
+});
+
+const managerGuardrail = (result = decision(0.1, 0.8)) => ({
+  threshold: 0.8,
+  frustrationThreshold: 0.8,
+  timeoutMs: 2000,
+  check: vi.fn<InjectionGuardrail['check']>().mockResolvedValue(result),
+});
+it.each(['en', 'es'] as const)(
+  'starts one %s manager handoff, stops accepting input, and waits for playback before saving',
+  async language => {
+    const guardrail = managerGuardrail(decision(0.1, 0.8, language));
+    const f = fixture(undefined, guardrail);
+    await f.session.start(stream());
+    f.provider().transcript?.({
+      ...finalUser('frustrated'),
+      text: 'I want a manager',
+    });
+    await vi.waitFor(() =>
+      expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce()
+    );
+    expect(f.events.output).toHaveBeenCalledWith({
+      type: 'closing',
+      callId: expect.any(String),
+      reason: 'demo_manager_handoff',
+    });
+    expect(f.agent.speakTerminalMessage.mock.calls[0][0]).toContain(
+      language === 'es'
+        ? 'simulará la transferencia a un gerente'
+        : 'simulate transferring you to a manager'
+    );
+    f.session.write({
+      streamId: 'microphone',
+      sequence: 0,
+      data: new Uint8Array(4800),
+    });
+    expect(f.agent.write).not.toHaveBeenCalled();
+    f.provider().transcript?.({
+      ...finalUser('again'),
+      text: 'Please get a manager',
+    });
+    await flush();
+    expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce();
+    f.provider().output({type: 'start', stream: stream('transfer')});
+    f.provider().output({
+      type: 'chunk',
+      chunk: {streamId: 'transfer', sequence: 0, data: new Uint8Array(4800)},
+    });
+    f.provider().output({type: 'end', streamId: 'transfer'});
+    f.provider().closingResponseDone?.();
+    f.session.progress({streamId: 'transfer', playedMs: 99});
+    expect(f.agent.dispose).not.toHaveBeenCalled();
+    f.session.progress({streamId: 'transfer', playedMs: 100});
+    await vi.waitFor(() =>
+      expect(f.events.status).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'saved',
+          endReason: 'demo_manager_handoff',
+        })
+      )
+    );
+    await f.session.close();
+  }
+);
+it('does not escalate below the frustration threshold', async () => {
+  const guardrail = managerGuardrail(decision(0.1, 0.799));
+  const f = fixture(undefined, guardrail);
+  await f.session.start(stream());
+  f.provider().transcript?.({
+    ...finalUser(),
+    text: 'Could you explain that again?',
+  });
+  await vi.waitFor(() => expect(guardrail.check).toHaveBeenCalledOnce());
+  await flush();
+  expect(f.agent.speakTerminalMessage).not.toHaveBeenCalled();
+  await f.session.close();
+});
+it('gives injection priority when both predicates exceed their thresholds', async () => {
+  const f = fixture(undefined, managerGuardrail(decision(0.8, 1)));
+  await f.session.start(stream());
+  f.provider().transcript?.(finalUser());
+  await vi.waitFor(() => expect(f.agent.dispose).toHaveBeenCalledOnce());
+  expect(f.agent.speakTerminalMessage).not.toHaveBeenCalled();
+  await f.session.close();
+});
+it('lets a later injection verdict override manager handoff', async () => {
+  const guardrail = managerGuardrail();
+  guardrail.check
+    .mockResolvedValueOnce(decision(0, 1))
+    .mockResolvedValueOnce(decision(1, 1));
+  const f = fixture(undefined, guardrail);
+  await f.session.start(stream());
+  f.provider().transcript?.(finalUser('frustration'));
+  await vi.waitFor(() =>
+    expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce()
+  );
+  f.provider().transcript?.(finalUser('injection'));
+  await vi.waitFor(() =>
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({state: 'saved', endReason: 'prompt_injection'})
+    )
+  );
+  await f.session.close();
+});
+it('immediately honors a visitor end request during manager handoff', async () => {
+  const f = fixture(undefined, managerGuardrail());
+  await f.session.start(stream());
+  f.provider().transcript?.(finalUser());
+  await vi.waitFor(() =>
+    expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce()
+  );
+  const status = f.events.status.mock.calls.find(
+    ([s]) => s.state === 'closing'
+  )?.[0];
+  if (!status) throw new Error('Missing closing status');
+  f.session.end(status.callId);
+  await vi.waitFor(() =>
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({state: 'saved', endReason: 'visitor_requested'})
+    )
+  );
+  expect(f.events.output).toHaveBeenCalledWith(
+    expect.objectContaining({type: 'closing', reason: 'visitor_requested'})
+  );
+  await f.session.close();
+});
+it.each(['false', 'throw'] as const)(
+  'saves manager handoff if terminal speech returns %s',
+  async mode => {
+    const f = fixture(undefined, managerGuardrail());
+    f.agent.speakTerminalMessage.mockImplementation(async () => {
+      if (mode === 'throw') throw new Error('Speech unavailable');
+      return false;
+    });
+    await f.session.start(stream());
+    f.provider().transcript?.(finalUser());
+    await vi.waitFor(() =>
+      expect(f.events.status).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'saved',
+          endReason: 'demo_manager_handoff',
+        })
+      )
+    );
+    await f.session.close();
+  }
+);
+it('keeps pending frustration results across microphone pause and includes assistant context', async () => {
+  let release!: (value: ConversationDecision) => void;
+  const guardrail = managerGuardrail();
+  guardrail.check.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        release = resolve;
+      })
+  );
+  const f = fixture(undefined, guardrail);
+  await f.session.start(stream());
+  f.provider().transcript?.({
+    id: 'assistant',
+    role: 'assistant',
+    text: 'Please repeat your question',
+    isFinal: true,
+    source: 'voice',
+  });
+  f.provider().transcript?.({
+    ...finalUser(),
+    text: 'You keep asking me to repeat myself',
+  });
+  await flush();
+  f.session.pause({streamId: 'microphone'});
+  release(decision(0, 1));
+  await vi.waitFor(() =>
+    expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce()
+  );
+  expect(guardrail.check.mock.calls[0][1]).toEqual([
+    {role: 'assistant', text: 'Please repeat your question'},
+  ]);
+  await f.session.close();
+});
+it('bounds manager handoff without playback acknowledgment to 15 seconds', async () => {
+  vi.useFakeTimers({toFake: ['setTimeout', 'clearTimeout', 'Date']});
+  try {
+    const f = fixture(undefined, managerGuardrail());
+    await f.session.start(stream());
+    f.provider().transcript?.(finalUser());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.agent.speakTerminalMessage).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(15000);
+    await f.session.close();
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'saved',
+        endReason: 'demo_manager_handoff',
+      })
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });

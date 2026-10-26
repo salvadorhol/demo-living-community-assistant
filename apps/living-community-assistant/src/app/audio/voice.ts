@@ -57,6 +57,7 @@ export class VoiceSession {
         if (
           [
             'visitor_requested',
+            'demo_manager_handoff',
             'prompt_injection',
             'guardrail_unavailable',
           ].includes(event.reason)

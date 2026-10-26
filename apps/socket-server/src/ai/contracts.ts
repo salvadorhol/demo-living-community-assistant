@@ -4,7 +4,7 @@ import type {
   AudioPlaybackProgress,
   TranscriptUpdate,
 } from '@living-community-assistant/types';
-import type { AppLogger } from '../logger.ts';
+import type {AppLogger} from '../logger.ts';
 
 /** Provider identity is internal and never written into the browser transcript schema. */
 export interface ProviderTranscript extends TranscriptUpdate {
@@ -20,12 +20,14 @@ export interface VoiceAgent {
   progress(value: AudioPlaybackProgress): void;
   dispose(): void;
   finish?(): Promise<void>;
+  /** Trusted server-owned closing speech; permanently disables normal response/tool work. */
+  speakTerminalMessage?(message: string, signal: AbortSignal): Promise<boolean>;
   currentResponseId?(): string | undefined;
   interruptResponse?(responseId: string, signal: AbortSignal): Promise<boolean>;
   redirectResponse?(
     responseId: string,
     instructions: string,
-    signal: AbortSignal,
+    signal: AbortSignal
   ): Promise<boolean>;
 }
 export interface VoiceAgentFactory {
@@ -41,7 +43,7 @@ export interface VoiceAgentFactory {
     responseStarted?(responseId: string): void;
     turnEnded?(): void;
     degraded?(): void;
-    closing?(action?: { reason: CallEndReason; immediate: boolean }): void;
+    closing?(action?: {reason: CallEndReason; immediate: boolean}): void;
     closingResponseDone?(): void;
     metadata?(info: Record<string, string>): void;
     output(event: AudioOutputEvent): void;
@@ -56,5 +58,5 @@ export interface TranscriptionSession {
   dispose(): void;
 }
 export type TranscriptionFactory = (
-  context: Parameters<VoiceAgentFactory['create']>[0],
+  context: Parameters<VoiceAgentFactory['create']>[0]
 ) => TranscriptionSession;

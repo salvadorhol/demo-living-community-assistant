@@ -3,8 +3,13 @@ import type {
   ContactInformationResponse,
   ContactProfile,
   AvailableAppointmentsResponse,
+  SalesDirectorAvailabilityResponse,
 } from '@living-community-assistant/types';
-import { createAvailabilityTools, isAppointments } from './availability.ts';
+import {
+  createAvailabilityTools,
+  isAppointments,
+  isSalesDirectorAvailability,
+} from './availability.ts';
 import {
   createFirebaseInvoker,
   type FirebaseToolConfig,
@@ -17,6 +22,12 @@ import {
 } from './contracts.ts';
 
 type Invoke = ReturnType<typeof createFirebaseInvoker>;
+const LOOKUP_TIMEOUT_MS = 30_000;
+const businessLookups = new Set([
+  'getCommunityInformation',
+  'getAvailableFloorPlans',
+  'getAvailableAppointments',
+]);
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const shape = (
@@ -95,7 +106,65 @@ export function createSophieTools(
   const loader = dependencies.loader ?? createContactLoader(invoke);
   let known: ContactInformationResponse = { profile: {} };
   let terminalAction: TerminalAction | undefined;
-  let salesChecked = false;
+  type DirectorAttempt =
+    | { ok: true; value: SalesDirectorAvailabilityResponse }
+    | { ok: false; error: unknown };
+  let salesAttempt: Promise<DirectorAttempt> | undefined;
+  let salesPending = false;
+  async function attemptDirector(
+    signal: AbortSignal,
+  ): Promise<DirectorAttempt> {
+    const deadline = new AbortController();
+    const bounded = AbortSignal.any([signal, deadline.signal]);
+    let abort: (() => void) | undefined;
+    const timer = setTimeout(
+      () =>
+        deadline.abort(
+          new ToolError(
+            'TOOL_TIMEOUT',
+            'Sales director availability lookup timed out.',
+          ),
+        ),
+      20_000,
+    );
+    try {
+      bounded.throwIfAborted();
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(bounded.reason);
+        bounded.addEventListener('abort', abort, { once: true });
+      });
+      const result = await Promise.race([
+        Promise.resolve().then(() => {
+          bounded.throwIfAborted();
+          return invoke('checkSalesDirectorAvailability', {}, bounded);
+        }),
+        cancelled,
+      ]);
+      if (!isSalesDirectorAvailability(result))
+        throw new ToolError(
+          'INVALID_RESULT',
+          'Sales director availability could not be verified.',
+        );
+      return { ok: true, value: result };
+    } catch (error) {
+      return { ok: false, error };
+    } finally {
+      clearTimeout(timer);
+      if (abort) bounded.removeEventListener('abort', abort);
+    }
+  }
+  function directorAttempt(signal: AbortSignal, recheck = false) {
+    signal.throwIfAborted();
+    // Share the first attempt across concurrent lookups, including an explicit
+    // director call. A failed attempt counts; only an explicit recheck retries it.
+    if (!salesAttempt || (recheck && !salesPending)) {
+      salesPending = true;
+      salesAttempt = attemptDirector(signal).finally(() => {
+        salesPending = false;
+      });
+    }
+    return salesAttempt;
+  }
   let availabilityGeneration = 0;
   let turn = 0;
   type Draft = {
@@ -130,6 +199,16 @@ export function createSophieTools(
     };
   };
   const validatedInvoke: Invoke = async (name, args, signal) => {
+    if (name === 'checkSalesDirectorAvailability') {
+      const attempt = await directorAttempt(signal, true);
+      signal.throwIfAborted();
+      if (!attempt.ok) throw attempt.error;
+      return attempt.value;
+    }
+    const attempt = businessLookups.has(name)
+      ? await directorAttempt(signal)
+      : undefined;
+    signal.throwIfAborted();
     const generation =
       name === 'getAvailableAppointments'
         ? ++availabilityGeneration
@@ -147,7 +226,19 @@ export function createSophieTools(
           for (const slot of value.appointments) offered.set(slot.id, slot);
         }
       }
-      return value;
+      return attempt && object(value)
+        ? {
+            ...value,
+            salesDirectorAvailability: {
+              status: attempt.ok
+                ? attempt.value.available
+                  ? 'available'
+                  : 'unavailable'
+                : 'unknown',
+              attempted: true,
+            },
+          }
+        : value;
     } catch (error) {
       if (
         name === 'getAvailableAppointments' &&
@@ -157,8 +248,6 @@ export function createSophieTools(
         offered.clear();
       }
       throw error;
-    } finally {
-      if (name === 'checkSalesDirectorAvailability') salesChecked = true;
     }
   };
   const extra: ToolDefinition[] = [
@@ -201,8 +290,9 @@ export function createSophieTools(
     },
     {
       name: 'get_community_information',
+      timeoutMs: LOOKUP_TIMEOUT_MS,
       description:
-        'Read the ACME community facts for one category. Use before answering community questions. Unlisted facts remain unknown; notProvided is not a negative answer. Mention a missing detail only if the visitor specifically requested it, then immediately offer a team-member callback. Never narrate tool mechanics.',
+        'Read the ACME community facts for one category. Use before answering community questions. The server performs the initial sales-director attempt automatically if needed; this tool is always available. Unlisted facts remain unknown; notProvided is not a negative answer. Mention a missing detail only if the visitor specifically requested it, then immediately offer a team-member callback. Never narrate tool mechanics.',
       parameters: shape({
         category: {
           type: 'string',
@@ -230,7 +320,7 @@ export function createSophieTools(
           'careers',
         ].includes(String(value.category)),
       async execute(args, context) {
-        const result = await invoke(
+        const result = await validatedInvoke(
           'getCommunityInformation',
           args,
           context.signal,
@@ -421,31 +511,26 @@ export function createSophieTools(
       },
     })),
   ];
-  return createAvailabilityTools(config, validatedInvoke, extra, {
-    async bootstrap(signal) {
-      const result = await loader.load(uid);
-      if (!signal.aborted) known = result;
+  return createAvailabilityTools(
+    config,
+    validatedInvoke,
+    extra,
+    {
+      async bootstrap(signal) {
+        const result = await loader.load(uid);
+        if (!signal.aborted) known = result;
+      },
+      onUserTurn() {
+        turn++;
+      },
+      greeting: () =>
+        known.profile.firstName
+          ? `Welcome back, ${known.profile.firstName}. This is Sophie, ACME Senior Living's virtual sales assistant. This conversation is being recorded. How may I help you today?`
+          : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual sales assistant. This conversation is being recorded. How may I help you today?',
+      toolCourtesy: true,
+      toolChoice: () => 'auto',
+      terminalAction: () => terminalAction,
     },
-    onUserTurn() {
-      turn++;
-    },
-    greeting: () =>
-      known.profile.firstName
-        ? `Welcome back, ${known.profile.firstName}. This is Sophie, ACME Senior Living's virtual sales assistant. This conversation is being recorded. How may I help you today?`
-        : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual sales assistant. This conversation is being recorded. How may I help you today?',
-    toolCourtesy: true,
-    toolAllowed: (name) => {
-      if (
-        [
-          'get_community_information',
-          'get_available_floor_plans',
-          'get_available_appointments',
-        ].includes(name)
-      )
-        return salesChecked;
-      return true;
-    },
-    toolChoice: () => 'auto',
-    terminalAction: () => terminalAction,
-  });
+    LOOKUP_TIMEOUT_MS,
+  );
 }

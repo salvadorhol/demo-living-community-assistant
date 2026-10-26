@@ -444,3 +444,27 @@ it.each(['prompt_injection', 'guardrail_unavailable'] as const)(
     voice.dispose();
   }
 );
+
+it('clears the previous reply for manager handoff, releases capture, then plays the transfer message', async () => {
+  const {voice, connection, status} = setup();
+  await voice.start();
+  const receive = connection.onAudio.mock.calls[0][0];
+  receive({type: 'closing', callId: 'call', reason: 'demo_manager_handoff'});
+  expect(mocks.playbackClear).toHaveBeenCalledOnce();
+  expect(mocks.dispose).toHaveBeenCalledOnce();
+  expect(connection.stopAudio).not.toHaveBeenCalled();
+  expect(status).toHaveBeenLastCalledWith({state: 'closing'});
+  receive({
+    type: 'start',
+    stream: {
+      streamId: 'manager',
+      format: {encoding: 'pcm16le', sampleRate: 24000, channels: 1},
+    },
+  });
+  expect(mocks.playbackHandle).toHaveBeenCalledWith(
+    expect.objectContaining({type: 'start'})
+  );
+  voice.finishClosing();
+  expect(status).toHaveBeenLastCalledWith({state: 'idle'});
+  voice.dispose();
+});

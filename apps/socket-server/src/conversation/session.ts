@@ -1,3 +1,4 @@
+import type {DecisionUtterance} from '../ai/openai/injection-check.ts';
 import {
   createTranscriptObservation,
   type ResponseTarget,
@@ -34,7 +35,7 @@ export function createConversationSession({
   let safetySignal = new AbortController();
   let safetyQueue: Promise<void> = Promise.resolve();
   const checked = new Set<string>();
-  let history: string[] = [];
+  const history = new Map<string, DecisionUtterance>();
   function terminateSafety(
     reason: 'prompt_injection' | 'guardrail_unavailable',
     owner: number
@@ -89,17 +90,19 @@ export function createConversationSession({
     )
       return;
     checked.add(value.id);
-    const preceding = history.slice(-3);
+    const preceding = [...history.values()];
     let remaining = 12000;
     for (let i = preceding.length - 1; i >= 0; i--) {
-      preceding[i] = preceding[i].slice(-remaining);
-      remaining -= preceding[i].length;
+      preceding[i] = {
+        ...preceding[i],
+        text: preceding[i].text.slice(-remaining),
+      };
+      remaining -= preceding[i].text.length;
       if (!remaining) {
         preceding.splice(0, i);
         break;
       }
     }
-    history = [...history.slice(-2), value.text];
     const lifetime = safetySignal.signal;
     const request = new AbortController();
     const cancel = () => request.abort();
@@ -124,7 +127,7 @@ export function createConversationSession({
       .then(async () => {
         if (lifetime.aborted || request.signal.aborted) return;
         try {
-          const probability = await guardrail.check(
+          const decision = await guardrail.check(
             value.text,
             preceding,
             request.signal
@@ -141,13 +144,19 @@ export function createConversationSession({
               callId: call?.id,
               utteranceId: value.id,
               model: 'gpt-6-luna',
-              probability,
+              promptInjectionProbability: decision.promptInjectionProbability,
+              frustrationProbability: decision.frustrationProbability,
+              language: decision.language,
               latencyMs: Date.now() - started,
             },
             'Safety check completed'
           );
-          if (probability >= guardrail.threshold)
+          if (decision.promptInjectionProbability >= guardrail.threshold)
             terminateSafety('prompt_injection', owner);
+          else if (
+            decision.frustrationProbability >= guardrail.frustrationThreshold
+          )
+            startManagerHandoff(decision.language, owner);
         } catch {
           if (!lifetime.aborted) {
             logger.warn(
@@ -263,6 +272,16 @@ export function createConversationSession({
     });
     call.update(update);
     checkTranscript(value, owner);
+    if (
+      value.isFinal &&
+      !value.incomplete &&
+      value.text.trim() &&
+      !history.has(value.id)
+    ) {
+      history.set(value.id, {role: value.role, text: value.text.slice(-12000)});
+      if (history.size > 6)
+        history.delete(history.keys().next().value as string);
+    }
   }
   let agent: VoiceAgent | undefined;
   let generation = 0;
@@ -278,6 +297,75 @@ export function createConversationSession({
         timer: ReturnType<typeof setTimeout>;
       }
     | undefined;
+  function beginClosing(
+    action: {reason: CallEndReason; immediate: boolean},
+    owner: number
+  ) {
+    if (owner !== generation || !call || ending || safetyStopped) return;
+    if (closing) {
+      if (action.reason !== 'visitor_requested' || !action.immediate) return;
+      clearTimeout(closing.timer);
+    }
+    invalidateObservation();
+    closing = {
+      reason: action.reason,
+      bytes: 0,
+      playedMs: 0,
+      delivered: false,
+      generated: false,
+      timer: setTimeout(() => endBackground(action.reason), 15000),
+    };
+    closing.timer.unref();
+    events.output({
+      type: 'closing',
+      callId: call.id,
+      reason: action.reason,
+    });
+    events.status({
+      callId: call.id,
+      state: 'closing',
+      endReason: action.reason,
+    });
+    if (action.immediate) endBackground(action.reason);
+  }
+  function startManagerHandoff(language: 'en' | 'es', owner: number) {
+    if (
+      owner !== generation ||
+      !call ||
+      !agent ||
+      closing ||
+      ending ||
+      safetyStopped ||
+      closed
+    )
+      return;
+    beginClosing({reason: 'demo_manager_handoff', immediate: false}, owner);
+    const message =
+      language === 'es'
+        ? 'Lamento que esto haya sido frustrante. Esta demostración ahora simulará la transferencia a un gerente. Gracias por su paciencia.'
+        : 'I’m sorry this has been frustrating. This demo will now simulate transferring you to a manager. Thank you for your patience.';
+    const signal = safetySignal.signal;
+    try {
+      // Invoke synchronously so provider tool work is disabled before another microtask runs.
+      const pending = agent.speakTerminalMessage?.(message, signal) ?? false;
+      void Promise.resolve(pending)
+        .then(applied => {
+          if (!applied && !signal.aborted && owner === generation) {
+            logger.warn(
+              {event: 'manager_handoff.failed', callId: call?.id},
+              'Manager closing speech unavailable'
+            );
+            endBackground('demo_manager_handoff');
+          }
+        })
+        .catch(() => {
+          if (!signal.aborted && owner === generation)
+            endBackground('demo_manager_handoff');
+        });
+    } catch {
+      endBackground('demo_manager_handoff');
+    }
+  }
   function finishClosingIfPlayed() {
     if (
       closing?.generated &&
@@ -306,7 +394,7 @@ export function createConversationSession({
     const current = call;
     if (!current) return;
     if (closing) {
-      reason = closing.reason;
+      if (reason !== 'visitor_requested') reason = closing.reason;
       clearTimeout(closing.timer);
       closing = undefined;
     }
@@ -432,7 +520,7 @@ export function createConversationSession({
           safetySignal = new AbortController();
           safetyQueue = Promise.resolve();
           checked.clear();
-          history = [];
+          history.clear();
           const owner = ++generation;
           const current = new SavedCall(
             uid,
@@ -474,28 +562,7 @@ export function createConversationSession({
             logger: logger.child({callId: current.id}),
             transcript: value => acceptTranscript(value, owner),
             closing(action = {reason: 'demo_sales_handoff', immediate: false}) {
-              if (owner !== generation || !call || closing || ending) return;
-              invalidateObservation();
-              closing = {
-                reason: action.reason,
-                bytes: 0,
-                playedMs: 0,
-                delivered: false,
-                generated: false,
-                timer: setTimeout(() => endBackground(action.reason), 15000),
-              };
-              closing.timer.unref();
-              events.output({
-                type: 'closing',
-                callId: call.id,
-                reason: action.reason,
-              });
-              events.status({
-                callId: call.id,
-                state: 'closing',
-                endReason: action.reason,
-              });
-              if (action.immediate) endBackground(action.reason);
+              beginClosing(action, owner);
             },
             closingResponseDone() {
               if (owner !== generation || !closing) return;
@@ -664,7 +731,14 @@ export function createConversationSession({
           code: 'INVALID_STREAM',
           message: 'No matching call.',
         };
-      if (call?.id === callId) endBackground('ended');
+      if (call?.id === callId) {
+        if (closing?.reason === 'demo_manager_handoff')
+          beginClosing(
+            {reason: 'visitor_requested', immediate: true},
+            generation
+          );
+        else endBackground('ended');
+      }
       return {ok: true};
     },
     retrySave(callId: string): AudioAck {

@@ -98,6 +98,7 @@ export class SavedCall {
       ...(this.closed &&
       [
         'demo_sales_handoff',
+        'demo_manager_handoff',
         'visitor_requested',
         'conversation_complete',
         'prompt_injection',

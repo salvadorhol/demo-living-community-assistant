@@ -1,3 +1,4 @@
+import { createServer } from 'node:net';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -12,27 +13,40 @@ delete config.hosting;
 config.firestore.rules = resolve(root, config.firestore.rules);
 config.firestore.indexes = resolve(root, config.firestore.indexes);
 config.storage.rules = resolve(root, config.storage.rules);
-for (const [service, port] of Object.entries({
-  auth: 9499,
-  firestore: 8480,
-  storage: 9498,
-  hub: 4503,
-  logging: 4603,
-}))
-  config.emulators[service] = { host: '127.0.0.1', port };
+const reserved = new Set();
+async function availablePort() {
+  for (;;) {
+    const server = createServer();
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const port = server.address().port;
+    await new Promise((resolve) => server.close(resolve));
+    if (!reserved.has(port)) {
+      reserved.add(port);
+      return port;
+    }
+  }
+}
+for (const service of ['auth', 'firestore', 'storage', 'hub', 'logging'])
+  config.emulators[service] = {
+    host: '127.0.0.1',
+    port: await availablePort(),
+  };
 delete config.emulators.functions;
-config.emulators.firestore.websocketPort = 9450;
+config.emulators.firestore.websocketPort = await availablePort();
 config.emulators.ui.enabled = false;
 const configPath = join(directory, 'firebase.json');
 writeFileSync(configPath, JSON.stringify(config));
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 try {
-  for (const mode of ['seed', 'verify']) {
+  for (const mode of ['seed', 'update-config', 'verify']) {
     const args = [
       require.resolve('firebase-tools/lib/bin/firebase.js'),
       'emulators:exec',
       '--project',
-      'demo-living-community-assistant',
+      'demo-appointments-persistence',
       '--only',
       'auth,firestore,storage',
       '--config',

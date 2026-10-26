@@ -2,21 +2,17 @@ import {
   validSophiePrompt,
   type SophiePrompt,
 } from '@living-community-assistant/types/prompt';
-import { ToolCalls } from './tool-calls.ts';
-import type { ToolRegistry } from '../tools/registry.ts';
-import { OutputPlayback } from './output-playback.ts';
-import {
-  VOICE_LIMITS,
-  readOpenAIKey,
-  readOutputQueueMs,
-} from '../../config.ts';
-import { ConfigurationError, voiceError } from '../../configuration-error.ts';
-import { silentLogger } from '../../logger.ts';
+import {ToolCalls} from './tool-calls.ts';
+import type {ToolRegistry} from '../tools/registry.ts';
+import {OutputPlayback} from './output-playback.ts';
+import {VOICE_LIMITS, readOpenAIKey, readOutputQueueMs} from '../../config.ts';
+import {ConfigurationError, voiceError} from '../../configuration-error.ts';
+import {silentLogger} from '../../logger.ts';
 import WebSocket from 'ws';
-import { createHash, randomUUID } from 'node:crypto';
-import type { AudioPlaybackProgress } from '@living-community-assistant/types';
-import { ASSISTANT_PROFILE } from '../assistant-profile.ts';
-import type { VoiceAgentFactory, ProviderTranscript } from '../contracts.ts';
+import {createHash, randomUUID} from 'node:crypto';
+import type {AudioPlaybackProgress} from '@living-community-assistant/types';
+import {ASSISTANT_PROFILE} from '../assistant-profile.ts';
+import type {VoiceAgentFactory, ProviderTranscript} from '../contracts.ts';
 import {
   parseEvent,
   providerCommandError,
@@ -33,13 +29,13 @@ export function createRealtimeVoice(
     maxOutputQueueMs?: number;
     tools?: ToolRegistry | ((uid: string) => ToolRegistry);
     prefetch?(uid: string): void;
-  } = {},
+  } = {}
 ): VoiceAgentFactory {
   const maxOutputQueueMs = readOutputQueueMs(options.maxOutputQueueMs);
   return {
     prefetch: options.prefetch,
     kind: 'conversation',
-    metadata: { model: ASSISTANT_PROFILE.model },
+    metadata: {model: ASSISTANT_PROFILE.model},
     create({
       uid,
       callId,
@@ -60,8 +56,10 @@ export function createRealtimeVoice(
       let instructions = '';
       let promptTimer: ReturnType<typeof setTimeout> | undefined;
       let closing = false;
+      let terminalMessageId: string | undefined;
+      let terminalResponseId: string | undefined;
       let greeted = false;
-      let log = logger.child({ component: 'openai-voice' });
+      let log = logger.child({component: 'openai-voice'});
       const texts = new Map<string, ProviderTranscript>();
       let socket: WebSocket | undefined;
       let initialization: Promise<void> | undefined;
@@ -102,14 +100,14 @@ export function createRealtimeVoice(
               type: 'realtime',
               tools: [],
               tool_choice: 'none',
-              audio: { input: { turn_detection: null } },
+              audio: {input: {turn_detection: null}},
             },
           });
           closingStarted?.(action);
         },
       });
       function updateTools() {
-        if (!ready || disposed || !registry?.toolChoice) return;
+        if (!ready || disposed || closing || !registry?.toolChoice) return;
         send({
           type: 'session.update',
           session: {
@@ -129,7 +127,7 @@ export function createRealtimeVoice(
           const id = `assistant-${item.itemId}-${item.contentIndex}`;
           const entry = texts.get(id);
           if (entry) {
-            const update = { ...entry, interrupted: true, isFinal: true };
+            const update = {...entry, interrupted: true, isFinal: true};
             texts.set(id, update);
             transcript?.(update);
           }
@@ -150,16 +148,16 @@ export function createRealtimeVoice(
         if (socket.bufferedAmount > VOICE_LIMITS.maxQueuedBytes)
           throw new Error('Voice input backlog exceeded.');
         let command = event;
-        if ((event as { type?: string }).type === 'session.update') {
+        if ((event as {type?: string}).type === 'session.update') {
           const eventId = randomUUID();
           configurationEvents.add(eventId);
           if (configurationEvents.size > 32)
             configurationEvents.delete(
-              configurationEvents.values().next().value as string,
+              configurationEvents.values().next().value as string
             );
-          command = { ...event, event_id: eventId };
+          command = {...event, event_id: eventId};
         }
-        socket.send(JSON.stringify(command), (error) => {
+        socket.send(JSON.stringify(command), error => {
           if (error) fail(error);
         });
       }
@@ -187,10 +185,10 @@ export function createRealtimeVoice(
                 : 'voice.provider_failed',
             err,
           },
-          'Voice provider failed',
+          'Voice provider failed'
         );
         rejectSetup?.(
-          err instanceof Error ? err : new Error('Voice provider failed'),
+          err instanceof Error ? err : new Error('Voice provider failed')
         );
         rejectSetup = undefined;
         dispose();
@@ -202,12 +200,12 @@ export function createRealtimeVoice(
       function interrupt(cancelResponse = true) {
         if (cancelResponse) tools.invalidate();
         log.debug(
-          { event: 'voice.interrupted', responseId },
-          'Assistant playback interrupted',
+          {event: 'voice.interrupted', responseId},
+          'Assistant playback interrupted'
         );
         if (cancelResponse && responseId) {
           cancelled.add(responseId);
-          send({ type: 'response.cancel', response_id: responseId });
+          send({type: 'response.cancel', response_id: responseId});
           responseId = undefined;
         }
         return playback.interrupt(cancelResponse);
@@ -220,6 +218,17 @@ export function createRealtimeVoice(
               id: string;
               metadata?: Record<string, string>;
             };
+            if (terminalMessageId) {
+              if (
+                response.metadata?.terminalMessageId !== terminalMessageId ||
+                (terminalResponseId && terminalResponseId !== response.id)
+              ) {
+                send({type: 'response.cancel', response_id: response.id});
+                cancelled.add(response.id);
+                return;
+              }
+              terminalResponseId = response.id;
+            }
             if (
               controlPending &&
               (!replacementControlId ||
@@ -230,7 +239,7 @@ export function createRealtimeVoice(
               !listening ||
               !tools.acceptResponse(response.id, response.metadata)
             ) {
-              send({ type: 'response.cancel', response_id: response.id });
+              send({type: 'response.cancel', response_id: response.id});
               cancelled.add(response.id);
             } else {
               responseId = response.id;
@@ -246,6 +255,8 @@ export function createRealtimeVoice(
             break;
           case 'response.output_audio_transcript.delta':
           case 'response.output_audio_transcript.done': {
+            if (terminalMessageId && event.response_id !== terminalResponseId)
+              break;
             if (
               typeof event.item_id !== 'string' ||
               !Number.isSafeInteger(event.content_index)
@@ -285,6 +296,8 @@ export function createRealtimeVoice(
             interrupt();
             break;
           case 'response.output_audio.delta': {
+            if (terminalMessageId && event.response_id !== terminalResponseId)
+              break;
             if (!listening || cancelled.has(String(event.response_id))) return;
             if (
               typeof event.delta !== 'string' ||
@@ -298,7 +311,7 @@ export function createRealtimeVoice(
                 content_index: number;
                 response_id: string;
                 delta: string;
-              },
+              }
             );
             break;
           }
@@ -319,7 +332,7 @@ export function createRealtimeVoice(
               throw Object.assign(new Error('Voice response failed'), {
                 code: (
                   event.response as {
-                    status_details?: { error?: { code?: string } };
+                    status_details?: {error?: {code?: string}};
                   }
                 ).status_details?.error?.code,
               });
@@ -334,7 +347,7 @@ export function createRealtimeVoice(
               event,
               configurationEvents,
               ready,
-              log,
+              log
             );
             if (error) throw error;
             break;
@@ -344,7 +357,7 @@ export function createRealtimeVoice(
       async function control(
         target: string,
         correctiveInstructions: string | undefined,
-        signal: AbortSignal,
+        signal: AbortSignal
       ): Promise<boolean> {
         if (
           disposed ||
@@ -367,31 +380,31 @@ export function createRealtimeVoice(
         const outputTargets = [
           playback.truncationTarget,
           playback.target,
-        ].filter((item) => item !== undefined);
+        ].filter(item => item !== undefined);
         try {
           const waits: Promise<void>[] = [];
           if (responseId === target)
             waits.push(
               acknowledgements.wait(
-                (event) =>
+                event =>
                   (event.type === 'response.done' &&
                     event.response?.id === target) ||
                   (event.type === 'error' &&
                     event.error?.code === 'response_cancel_not_active'),
                 controlSignal,
-                VOICE_LIMITS.controlTimeoutMs,
-              ),
+                VOICE_LIMITS.controlTimeoutMs
+              )
             );
           for (const outputTarget of outputTargets)
             waits.push(
               acknowledgements.wait(
-                (event) =>
+                event =>
                   event.type === 'conversation.item.truncated' &&
                   event.item_id === outputTarget.itemId &&
                   event.content_index === outputTarget.contentIndex,
                 controlSignal,
-                VOICE_LIMITS.controlTimeoutMs,
-              ),
+                VOICE_LIMITS.controlTimeoutMs
+              )
             );
           await Promise.all([
             ...waits,
@@ -414,11 +427,11 @@ export function createRealtimeVoice(
             const controlId = randomUUID();
             replacementControlId = controlId;
             const created = acknowledgements.wait(
-              (event) =>
+              event =>
                 event.type === 'response.created' &&
                 event.response?.metadata?.controlId === controlId,
               controlSignal,
-              Math.max(1, deadline - Date.now()),
+              Math.max(1, deadline - Date.now())
             );
             const sent = Promise.resolve().then(() => {
               if (
@@ -434,7 +447,7 @@ export function createRealtimeVoice(
                 type: 'response.create',
                 response: {
                   instructions: `${instructions}\n\nTrusted corrective instruction:\n${correctiveInstructions}`,
-                  metadata: { controlId },
+                  metadata: {controlId},
                 },
               });
             });
@@ -451,6 +464,77 @@ export function createRealtimeVoice(
           controlPending = false;
         }
       }
+      async function speakTerminalMessage(
+        message: string,
+        signal: AbortSignal
+      ): Promise<boolean> {
+        if (!ready || disposed || closing || signal.aborted || !message.trim())
+          return false;
+        closing = true;
+        terminalMessageId = randomUUID();
+        invalidateControl();
+        tools.invalidate();
+        const controlSignal = AbortSignal.any([signal, lifetime.signal]);
+        const target = responseId;
+        const targets = [playback.truncationTarget, playback.target].filter(
+          item => item !== undefined
+        );
+        // Register waits before sending cancellation/truncation commands.
+        const waits: Promise<void>[] = [];
+        if (target)
+          waits.push(
+            acknowledgements.wait(
+              event =>
+                (event.type === 'response.done' &&
+                  event.response?.id === target) ||
+                (event.type === 'error' &&
+                  event.error?.code === 'response_cancel_not_active'),
+              controlSignal,
+              VOICE_LIMITS.controlTimeoutMs
+            )
+          );
+        for (const item of targets)
+          waits.push(
+            acknowledgements.wait(
+              event =>
+                event.type === 'conversation.item.truncated' &&
+                event.item_id === item.itemId &&
+                event.content_index === item.contentIndex,
+              controlSignal,
+              VOICE_LIMITS.controlTimeoutMs
+            )
+          );
+        try {
+          const commands = Promise.resolve().then(() => {
+            if (controlSignal.aborted || disposed) return;
+            interrupt();
+            send({type: 'input_audio_buffer.clear'});
+            send({
+              type: 'session.update',
+              session: {
+                type: 'realtime',
+                tools: [],
+                tool_choice: 'none',
+                audio: {input: {turn_detection: null}},
+              },
+            });
+          });
+          await Promise.all([...waits, commands]);
+          if (controlSignal.aborted || disposed) return false;
+          listening = true; // Terminal playback must also work with a paused microphone.
+          send({
+            type: 'response.create',
+            response: {
+              tool_choice: 'none',
+              instructions: `Speak exactly this JSON string as the server-owned closing message. Do not call tools or ask any questions.\n${JSON.stringify(message)}`,
+              metadata: {terminalMessageId},
+            },
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
       return {
         initialize() {
           if (disposed)
@@ -459,7 +543,7 @@ export function createRealtimeVoice(
             rejectSetup = reject;
             if (!key) {
               reject(
-                new ConfigurationError('OPENAI_API_KEY is required for voice.'),
+                new ConfigurationError('OPENAI_API_KEY is required for voice.')
               );
               return;
             }
@@ -471,7 +555,7 @@ export function createRealtimeVoice(
                 return;
               }
               instructions = prompt.content;
-              metadata?.({ sophiePromptRevision: String(prompt.revision) });
+              metadata?.({sophiePromptRevision: String(prompt.revision)});
               socket = connect(
                 `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(ASSISTANT_PROFILE.model)}`,
                 {
@@ -481,19 +565,19 @@ export function createRealtimeVoice(
                       .update(uid)
                       .digest('hex'),
                   },
-                },
+                }
               );
               setupTimer = setTimeout(
                 () => fail(new Error('Voice initialization timed out')),
-                VOICE_LIMITS.setupTimeoutMs,
+                VOICE_LIMITS.setupTimeoutMs
               );
               socket.on('error', fail);
-              socket.on('close', (code) =>
+              socket.on('close', code =>
                 fail(
                   Object.assign(new Error('Voice upstream closed'), {
                     code: String(code),
-                  }),
-                ),
+                  })
+                )
               );
               const configure = () => {
                 try {
@@ -513,11 +597,11 @@ export function createRealtimeVoice(
                         : {}),
                       audio: {
                         input: {
-                          format: { type: 'audio/pcm', rate: 24000 },
+                          format: {type: 'audio/pcm', rate: 24000},
                           turn_detection: null,
                         },
                         output: {
-                          format: { type: 'audio/pcm', rate: 24000 },
+                          format: {type: 'audio/pcm', rate: 24000},
                           voice: ASSISTANT_PROFILE.voice,
                         },
                       },
@@ -535,11 +619,11 @@ export function createRealtimeVoice(
                     },
                     () => {
                       if (!disposed) configure();
-                    },
+                    }
                   );
                 else configure();
               });
-              socket.on('message', (data) => {
+              socket.on('message', data => {
                 if (disposed) return;
                 try {
                   const event = parseEvent(data);
@@ -548,14 +632,14 @@ export function createRealtimeVoice(
                     event.type === 'session.created' &&
                     typeof event.session?.id === 'string'
                   ) {
-                    log = log.child({ providerSessionId: event.session.id });
+                    log = log.child({providerSessionId: event.session.id});
                     playback.setLogger(log);
-                    metadata?.({ providerSessionId: event.session.id });
+                    metadata?.({providerSessionId: event.session.id});
                   }
                   if (event.type === 'session.updated' && !ready) {
                     log.info(
-                      { event: 'voice.configured' },
-                      'Voice provider configured',
+                      {event: 'voice.configured'},
+                      'Voice provider configured'
                     );
                     ready = true;
                     clearTimeout(setupTimer);
@@ -570,7 +654,7 @@ export function createRealtimeVoice(
             };
             promptTimer = setTimeout(
               () => fail(new Error('Assistant prompt load timed out.')),
-              5000,
+              5000
             );
             // Injectable synchronous fixtures keep transport tests independent of Firestore.
             try {
@@ -579,7 +663,7 @@ export function createRealtimeVoice(
                 void prompt
                   .then(startProvider)
                   .catch(() =>
-                    fail(new Error('Assistant prompt could not be loaded.')),
+                    fail(new Error('Assistant prompt could not be loaded.'))
                   );
               } else startProvider(prompt);
             } catch {
@@ -589,6 +673,7 @@ export function createRealtimeVoice(
           return initialization;
         },
         beginInput() {
+          if (closing) return;
           if (!ready || disposed) throw new Error('Voice not ready');
           playback.flushTruncation();
           tools.invalidate(true);
@@ -598,7 +683,7 @@ export function createRealtimeVoice(
             session: {
               type: 'realtime',
               audio: {
-                input: { turn_detection: ASSISTANT_PROFILE.turnDetection },
+                input: {turn_detection: ASSISTANT_PROFILE.turnDetection},
               },
             },
           });
@@ -628,15 +713,16 @@ export function createRealtimeVoice(
             type: 'session.update',
             session: {
               type: 'realtime',
-              audio: { input: { turn_detection: null } },
+              audio: {input: {turn_detection: null}},
             },
           });
           interrupt();
-          send({ type: 'input_audio_buffer.clear' });
+          send({type: 'input_audio_buffer.clear'});
         },
         progress(value: AudioPlaybackProgress) {
           playback.progress(value);
         },
+        speakTerminalMessage,
         currentResponseId: activeResponseId,
         interruptResponse: (target, signal) =>
           control(target, undefined, signal),

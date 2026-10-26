@@ -10,6 +10,7 @@ describe('server configuration', () => {
       maxCallMs: 3600000,
       voiceOutputQueueMs: 60000,
       injectionThreshold: 0.8,
+      frustrationThreshold: 0.8,
       decisionsTimeoutMs: 2000,
       host: '127.0.0.1',
       port: 3000,
@@ -31,6 +32,7 @@ describe('server configuration', () => {
       maxCallMs: 3600000,
       voiceOutputQueueMs: 60000,
       injectionThreshold: 0.8,
+      frustrationThreshold: 0.8,
       decisionsTimeoutMs: 2000,
       host: '0.0.0.0',
       port: 4001,
@@ -95,4 +97,19 @@ it.each(['0', '-1', '30001', 'NaN'])('rejects Decisions timeout %s', value => {
   expect(() =>
     readConfig({FIREBASE_PROJECT_ID: 'demo', DECISIONS_TIMEOUT_MS: value})
   ).toThrow(/DECISIONS_TIMEOUT_MS/);
+});
+
+it.each(['-1', '1.1', 'NaN', 'Infinity'])(
+  'rejects frustration threshold %s',
+  value => {
+    expect(() =>
+      readConfig({FIREBASE_PROJECT_ID: 'demo', FRUSTRATION_THRESHOLD: value})
+    ).toThrow(/FRUSTRATION_THRESHOLD/);
+  }
+);
+it('accepts an explicit frustration threshold', () => {
+  expect(
+    readConfig({FIREBASE_PROJECT_ID: 'demo', FRUSTRATION_THRESHOLD: '0.9'})
+      .frustrationThreshold
+  ).toBe(0.9);
 });

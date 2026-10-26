@@ -65,6 +65,7 @@ export function createAvailabilityTools(
   invoke = createFirebaseInvoker(config),
   additional: readonly ToolDefinition[] = [],
   lifecycle: Parameters<typeof createToolRegistry>[1] = {},
+  lookupTimeoutMs?: number,
 ) {
   const bindings = [
     {
@@ -95,7 +96,7 @@ export function createAvailabilityTools(
       ...bindings.map((binding) => ({
         name: binding.name,
         description: binding.description,
-        timeoutMs: binding.timeoutMs,
+        timeoutMs: binding.timeoutMs ?? lookupTimeoutMs,
         parameters: {
           type: 'object',
           properties: {},

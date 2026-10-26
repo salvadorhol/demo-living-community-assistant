@@ -63,6 +63,7 @@ try {
     undefined,
     createInjectionGuardrail({
       threshold: config.injectionThreshold,
+      frustrationThreshold: config.frustrationThreshold,
       timeoutMs: config.decisionsTimeoutMs,
     })
   );

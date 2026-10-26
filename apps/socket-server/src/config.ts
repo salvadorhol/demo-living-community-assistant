@@ -8,6 +8,7 @@ export interface ServerConfig {
   port: number;
   allowedOrigins: string[];
   injectionThreshold?: number;
+  frustrationThreshold?: number;
   decisionsTimeoutMs?: number;
 }
 
@@ -18,6 +19,7 @@ export function readConfig(
   maxCallMs: number;
   voiceOutputQueueMs: number;
   injectionThreshold: number;
+  frustrationThreshold: number;
   decisionsTimeoutMs: number;
 } {
   const rawPort = env.PORT ?? '3000';
@@ -76,6 +78,15 @@ export function readConfig(
     throw new ConfigurationError(
       'MAX_CALL_MS must be between 1000 and 3600000.'
     );
+  const frustrationThreshold = Number(env.FRUSTRATION_THRESHOLD ?? 0.8);
+  if (
+    !Number.isFinite(frustrationThreshold) ||
+    frustrationThreshold < 0 ||
+    frustrationThreshold > 1
+  )
+    throw new ConfigurationError(
+      'FRUSTRATION_THRESHOLD must be between 0 and 1.'
+    );
   const injectionThreshold = Number(env.INJECTION_THRESHOLD ?? 0.8);
   const decisionsTimeoutMs = Number(env.DECISIONS_TIMEOUT_MS ?? 2000);
   if (
@@ -96,6 +107,7 @@ export function readConfig(
     );
   return {
     injectionThreshold,
+    frustrationThreshold,
     decisionsTimeoutMs,
     host,
     port,

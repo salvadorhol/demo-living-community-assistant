@@ -17,7 +17,7 @@ export function createVoiceAgent({
   return {
     prefetch: voice.prefetch,
     kind: 'conversation',
-    metadata: { ...voice.metadata, ...metadata },
+    metadata: {...voice.metadata, ...metadata},
     create(context) {
       const captions = transcription(context);
       let agent: VoiceAgent;
@@ -63,6 +63,9 @@ export function createVoiceAgent({
             agent.dispose();
           }
         },
+        speakTerminalMessage: (message, signal) =>
+          agent.speakTerminalMessage?.(message, signal) ??
+          Promise.resolve(false),
         currentResponseId: () => agent.currentResponseId?.(),
         interruptResponse: (responseId, signal) =>
           agent.interruptResponse?.(responseId, signal) ??

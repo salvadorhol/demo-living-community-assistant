@@ -64,6 +64,7 @@ apps/living-community-assistant/src/environments/environment.prod.ts
 .firebase.deploy.*.json
 .firebase.smoke.*.json
 firebase-emulator-data/
+firebase-local-config/
 .secret.local
 firebase-debug*.log
 ui-debug.log
