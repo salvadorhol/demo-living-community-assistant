@@ -1,12 +1,15 @@
 const mocks = vi.hoisted(() => ({
   secret: vi.fn(() => 'correct password'),
+  adminSecret: vi.fn(() => 'admin password'),
   createUser: vi.fn(async ({uid}: {uid: string}) => ({uid})),
   claims: vi.fn(async () => undefined),
   token: vi.fn(async () => 'custom-token'),
   warn: vi.fn(),
 }));
 vi.mock('firebase-functions/params', () => ({
-  defineSecret: () => ({value: mocks.secret}),
+  defineSecret: (name: string) => ({
+    value: name === 'ADMIN_ACCESS_PASSWORD' ? mocks.adminSecret : mocks.secret,
+  }),
 }));
 vi.mock('firebase-functions/v2/https', () => ({
   onCall: (_options: unknown, handler: unknown) => handler,
@@ -31,13 +34,14 @@ vi.mock('firebase-admin/auth', () => ({
     createCustomToken: mocks.token,
   }),
 }));
-import {unlockApp} from './access';
+import {unlockApp, unlockAdmin} from './access';
 const call = unlockApp as unknown as (request: {
   data?: unknown;
 }) => Promise<unknown>;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.secret.mockReturnValue('correct password');
+  mocks.adminSecret.mockReturnValue('admin password');
 });
 it('creates a new visitor and persists access before signing a token', async () => {
   await expect(
@@ -87,4 +91,46 @@ it('hides SDK failure details', async () => {
     message: 'Sign-in is unavailable. Please retry.',
   });
   expect(mocks.warn).toHaveBeenCalledWith('app.access_signing_failed');
+});
+
+const callAdmin = unlockAdmin as unknown as typeof call;
+it('grants persisted admin and app access only for the admin password', async () => {
+  await expect(
+    callAdmin({data: {password: 'admin password'}})
+  ).resolves.toEqual({customToken: 'custom-token'});
+  expect(mocks.claims).toHaveBeenCalledWith(expect.any(String), {
+    admin: true,
+    appAccess: true,
+  });
+});
+it('rejects the app password at the admin exchange', async () => {
+  await expect(
+    callAdmin({data: {password: 'correct password'}})
+  ).rejects.toMatchObject({code: 'permission-denied'});
+  expect(mocks.createUser).not.toHaveBeenCalled();
+});
+it('does not accept the admin password at the ordinary exchange', async () => {
+  await expect(
+    call({data: {password: 'admin password'}})
+  ).rejects.toMatchObject({code: 'permission-denied'});
+});
+it.each([''])('fails closed for a missing admin secret %j', async secret => {
+  mocks.adminSecret.mockReturnValue(secret);
+  await expect(
+    callAdmin({data: {password: secret || 'anything'}})
+  ).rejects.toMatchObject({code: 'unavailable'});
+  expect(mocks.createUser).not.toHaveBeenCalled();
+});
+
+it('allows matching app and admin passwords while granting claims by endpoint', async () => {
+  mocks.adminSecret.mockReturnValue('correct password');
+  await callAdmin({data: {password: 'correct password'}});
+  expect(mocks.claims).toHaveBeenLastCalledWith(expect.any(String), {
+    admin: true,
+    appAccess: true,
+  });
+  await call({data: {password: 'correct password'}});
+  expect(mocks.claims).toHaveBeenLastCalledWith(expect.any(String), {
+    appAccess: true,
+  });
 });

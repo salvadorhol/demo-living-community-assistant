@@ -9,6 +9,8 @@ import { microphoneSupported } from './audio/capture';
 import styles from './app.module.scss';
 import { AccessGate } from './access-gate';
 import { lockApp } from './api/session';
+import { Routes, Route } from 'react-router-dom';
+import { AdminPage } from './admin-page';
 
 function MicrophoneIcon() {
   return (
@@ -29,9 +31,24 @@ function MicrophoneIcon() {
 
 export function App() {
   return (
-    <AccessGate>
-      <Workspace />
-    </AccessGate>
+    <Routes>
+      <Route
+        path="/admin"
+        element={
+          <AccessGate key="admin" admin>
+            <AdminPage />
+          </AccessGate>
+        }
+      />
+      <Route
+        path="*"
+        element={
+          <AccessGate key="app">
+            <Workspace />
+          </AccessGate>
+        }
+      />
+    </Routes>
   );
 }
 

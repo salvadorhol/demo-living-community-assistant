@@ -1,4 +1,3 @@
-import { sophieInstructions } from './sophie-prompt.ts';
 const model = 'gpt-realtime-2.1-mini';
 const transcriptionModel = 'gpt-live-transcribe';
 const voice = 'marin';
@@ -8,7 +7,6 @@ export const ASSISTANT_PROFILE = {
   model: model,
   transcriptionModel,
   voice,
-  instructions: sophieInstructions,
   turnDetection: {
     type: 'server_vad',
     threshold: 0.5,

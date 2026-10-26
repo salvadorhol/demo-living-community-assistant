@@ -39,7 +39,7 @@ try {
       'demo-living-community-assistant',
       '--config',
       configPath,
-      'node tools/smoke-health.mjs && node tools/smoke-access.mjs && node tools/smoke-tools.mjs && node tools/smoke-profile.mjs && node tools/test-call-security.mjs',
+      'node tools/seed-sophie-prompt.mjs --project demo-living-community-assistant && node tools/smoke-admin.mjs && node tools/smoke-health.mjs && node tools/smoke-access.mjs && node tools/smoke-tools.mjs && node tools/smoke-profile.mjs && node tools/test-call-security.mjs',
     ],
     {
       cwd: workspaceRoot,

@@ -1,5 +1,9 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import {
+  browserLocalPersistence,
+  connectAuthEmulator,
+  initializeAuth,
+} from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
@@ -10,7 +14,11 @@ const environment: FirebaseClientEnvironment = selectedEnvironment;
 const existingApp = getApps().length ? getApp() : undefined;
 export const firebaseApp = existingApp ?? initializeApp(environment.firebase);
 
-export const auth = getAuth(firebaseApp);
+// Select one persistence store before restoration so tabs cannot migrate the
+// same identity between IndexedDB and localStorage during initialization.
+export const auth = initializeAuth(firebaseApp, {
+  persistence: browserLocalPersistence,
+});
 export const firestore = getFirestore(firebaseApp);
 export const storage = getStorage(firebaseApp);
 // Initialize Auth first so Functions can attach its ID token to callable requests.

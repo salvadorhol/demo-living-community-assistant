@@ -1,3 +1,4 @@
+import { loadTestPrompt } from '../testing/prompt-fixture.ts';
 import { createConversationSession } from './session.ts';
 import { createVoiceAgent } from '../ai/create-agent.ts';
 import { createRealtimeVoice } from '../ai/openai/realtime-session.ts';
@@ -15,7 +16,9 @@ it('redirects through the real adapters without a new call or observer lifecycle
     uid: 'owner',
     roomId: 'room',
     factory: createVoiceAgent({
-      voice: createRealtimeVoice('fixture-key', upstream.connect),
+      voice: createRealtimeVoice('fixture-key', upstream.connect, {
+        loadPrompt: loadTestPrompt,
+      }),
       transcription: (context) =>
         createTranscriptionSession(context, 'fixture-key', upstream.connect),
     }),

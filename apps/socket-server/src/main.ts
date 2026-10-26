@@ -1,3 +1,4 @@
+import { firebasePromptLoader } from './ai/prompt-store.ts';
 import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
 import { createFirebaseInvoker } from './ai/tools/firebase-invoker.ts';
 import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
@@ -45,6 +46,7 @@ try {
     (token) => getAuth(firebase).verifyIdToken(token),
     createVoiceAgent({
       voice: createRealtimeVoice(undefined, undefined, {
+        loadPrompt: firebasePromptLoader(firebase),
         maxOutputQueueMs: config.voiceOutputQueueMs,
         tools: (uid) => createSophieTools(toolConfig, uid, { invoke, loader }),
         prefetch: (uid) => {

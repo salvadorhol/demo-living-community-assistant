@@ -1,3 +1,5 @@
+import { seedSophiePrompt } from './ai/seed-prompt.ts';
+import { firebasePromptLoader } from './ai/prompt-store.ts';
 import { createSophieTools, createContactLoader } from './ai/tools/sophie.ts';
 import { createFirebaseInvoker } from './ai/tools/firebase-invoker.ts';
 import { readFirebaseToolConfig } from './ai/tools/firebase-invoker.ts';
@@ -28,6 +30,7 @@ const firebase = initializeApp({
   projectId: config.firebaseProjectId,
   storageBucket: 'demo-living-community-assistant.firebasestorage.app',
 });
+await seedSophiePrompt({ projectId: config.firebaseProjectId });
 const upstream = await createFakeOpenAI({ toolCalls: true });
 const connect = upstream.connect;
 const toolConfig = readFirebaseToolConfig(config.firebaseProjectId);
@@ -35,6 +38,7 @@ const invoke = createFirebaseInvoker(toolConfig);
 const loader = createContactLoader(invoke);
 const provider = createVoiceAgent({
   voice: createRealtimeVoice('fixture-key', connect, {
+    loadPrompt: firebasePromptLoader(firebase),
     tools: (uid) => createSophieTools(toolConfig, uid, { invoke, loader }),
     prefetch: (uid) => {
       void loader.load(uid);

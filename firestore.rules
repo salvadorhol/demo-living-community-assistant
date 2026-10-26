@@ -1,6 +1,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    match /appConfig/sophiePrompt {
+      function isAdmin() {
+        return request.auth != null && request.auth.token.admin == true;
+      }
+      function validPrompt() {
+        let data = request.resource.data;
+        return data.keys().hasAll(['content', 'revision', 'updatedAt', 'updatedBy'])
+          && data.keys().hasOnly(['content', 'revision', 'updatedAt', 'updatedBy'])
+          && data.content is string && data.content.size() > 0 && data.content.size() <= 50000
+          && data.content.matches('(?s).*[^\\s].*')
+          && data.revision is int && data.revision >= 1 && data.revision <= 9007199254740991
+          && data.updatedBy == request.auth.uid
+          && data.updatedAt == request.time;
+      }
+      allow get: if isAdmin();
+      allow create: if isAdmin() && validPrompt() && request.resource.data.revision == 1;
+      allow update: if isAdmin() && validPrompt() && request.resource.data.revision == resource.data.revision + 1;
+      allow list, delete: if false;
+    }
     match /sessions/{uid} {
       allow read: if request.auth != null && request.auth.token.appAccess == true && request.auth.uid == uid;
       allow write: if false;

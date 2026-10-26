@@ -2,7 +2,13 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { observeAccess, unlockApp } from './api/session';
 import styles from './app.module.scss';
 
-export function AccessGate({ children }: { children: ReactNode }) {
+export function AccessGate({
+  children,
+  admin = false,
+}: {
+  children: ReactNode;
+  admin?: boolean;
+}) {
   const [loading, setLoading] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const [password, setPassword] = useState('');
@@ -12,23 +18,30 @@ export function AccessGate({ children }: { children: ReactNode }) {
 
   useEffect(
     () =>
-      observeAccess((user, issue) => {
-        setAllowed(Boolean(user));
-        setLoading(false);
-        setError(issue);
-      }),
-    [attempt],
+      observeAccess(
+        (user, issue) => {
+          setAllowed(Boolean(user));
+          setLoading(false);
+          setError(issue);
+        },
+        admin ? 'admin' : 'appAccess',
+      ),
+    [attempt, admin],
   );
 
   if (allowed) return children;
   return (
     <main className={styles['page']}>
-      <h1>Living Community Assistant</h1>
+      <h1>
+        {admin ? 'Sophie prompt administration' : 'Living Community Assistant'}
+      </h1>
       {loading ? (
         <p role="status">Checking access…</p>
       ) : (
         <section className={styles['access']} aria-label="Password required">
-          <h2>Enter the access password</h2>
+          <h2>
+            {admin ? 'Enter the admin password' : 'Enter the access password'}
+          </h2>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -37,7 +50,7 @@ export function AccessGate({ children }: { children: ReactNode }) {
               setError(undefined);
               const submitted = password;
               setPassword('');
-              void unlockApp(submitted)
+              void unlockApp(submitted, admin)
                 .catch((failure: unknown) => {
                   const code = (failure as { code?: string })?.code;
                   setError(

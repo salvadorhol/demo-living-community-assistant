@@ -74,5 +74,7 @@ it('clears the password, displays errors, and permits a second submission', asyn
     target: { value: 'correct' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
-  await waitFor(() => expect(mocks.unlock).toHaveBeenLastCalledWith('correct'));
+  await waitFor(() =>
+    expect(mocks.unlock).toHaveBeenLastCalledWith('correct', false),
+  );
 });

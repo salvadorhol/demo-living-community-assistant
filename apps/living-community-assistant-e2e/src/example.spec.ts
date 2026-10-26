@@ -262,3 +262,75 @@ test('requires the password before connecting and locks again on sign-out', asyn
   await page.reload();
   await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
 });
+
+test('admin password edits the private prompt, persists it, and signs out', async ({
+  page,
+}) => {
+  await page.goto('/admin');
+  await expect(
+    page.getByRole('heading', { name: 'Enter the admin password' }),
+  ).toBeVisible();
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Incorrect password');
+  await expect(page.getByLabel('Sophie’s prompt')).toHaveCount(0);
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-admin-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  const editor = page.getByLabel('Sophie’s prompt');
+  await expect(editor).toBeVisible();
+  const original = await editor.inputValue();
+  const edited = original + '\nAdmin browser test instruction.';
+  await editor.fill(edited);
+  await page.getByRole('button', { name: 'Save prompt', exact: true }).click();
+  await expect(
+    page.getByText('Prompt saved. New calls will use the saved version.'),
+  ).toBeVisible();
+  await page.reload();
+  await expect(editor).toHaveValue(edited);
+  const other = await page.context().newPage();
+  await other.goto('/admin');
+  await expect(other.getByLabel('Sophie’s prompt')).toBeVisible();
+  await other
+    .getByLabel('Sophie’s prompt')
+    .fill(edited + '\nOther admin draft.');
+  await editor.fill(original);
+  await page.getByRole('button', { name: 'Save prompt', exact: true }).click();
+  await expect(
+    page.getByText('Prompt saved. New calls will use the saved version.'),
+  ).toBeVisible();
+  await other.getByRole('button', { name: 'Save prompt', exact: true }).click();
+  await expect(other.getByRole('alert')).toContainText(
+    'Another admin changed this prompt',
+  );
+  await expect(other.getByLabel('Sophie’s prompt')).toHaveValue(
+    edited + '\nOther admin draft.',
+  );
+  // Sign-out from this tab must clear the other tab's private editor and draft.
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
+  await expect(other.getByLabel('Password', { exact: true })).toBeVisible();
+  await expect(other.getByLabel('Sophie’s prompt')).toHaveCount(0);
+  await other.close();
+});
+
+test('an ordinary app session cannot open the prompt editor', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page
+    .getByLabel('Password', { exact: true })
+    .fill('fixture-access-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(
+    page.getByRole('status', { name: 'Socket connection status' }),
+  ).toHaveText('Socket on');
+  await page.goto('/admin');
+  await expect(
+    page.getByRole('heading', { name: 'Enter the admin password' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Sophie’s prompt')).toHaveCount(0);
+});

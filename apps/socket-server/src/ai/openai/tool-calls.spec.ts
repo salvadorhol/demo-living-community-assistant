@@ -1,3 +1,4 @@
+import { loadTestPrompt } from '../../testing/prompt-fixture.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import { createRealtimeVoice } from './realtime-session.ts';
@@ -40,7 +41,7 @@ async function setup(
   const agent = createRealtimeVoice(
     'key',
     () => upstream as unknown as WebSocket,
-    { tools: registry },
+    { tools: registry, loadPrompt: loadTestPrompt },
   ).create({ uid: 'owner', output });
   const ready = agent.initialize();
   upstream.emit('open');

@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import {
   prepareEmulatorSecrets,
   TEST_ACCESS_PASSWORD,
+  TEST_ADMIN_PASSWORD,
 } from './emulator-secrets.mjs';
 
 function fixture(run) {
@@ -32,7 +33,8 @@ test('local emulators require an explicitly configured secret', () =>
 test('local emulators copy the configured file to the Functions source', () =>
   fixture((root) => {
     mkdirSync(resolve(root, 'functions'));
-    const content = 'APP_ACCESS_PASSWORD=local-only\n';
+    const content =
+      'APP_ACCESS_PASSWORD=local-only\nADMIN_ACCESS_PASSWORD=local-admin-only\n';
     writeFileSync(resolve(root, 'functions/.secret.local'), content);
     prepareEmulatorSecrets({ root });
     assert.equal(
@@ -50,6 +52,33 @@ test('test emulators use the fixture password without copying a local secret', (
     prepareEmulatorSecrets({ root, test: true });
     assert.equal(
       readFileSync(resolve(root, 'dist/functions/.secret.local'), 'utf8'),
-      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\n`,
+      `APP_ACCESS_PASSWORD=${TEST_ACCESS_PASSWORD}\nADMIN_ACCESS_PASSWORD=${TEST_ADMIN_PASSWORD}\n`,
+    );
+  }));
+
+test('local emulators reject missing passwords', () =>
+  fixture((root) => {
+    mkdirSync(resolve(root, 'functions'));
+    for (const content of [
+      'APP_ACCESS_PASSWORD=local-only\n',
+      'ADMIN_ACCESS_PASSWORD=local-admin-only\n',
+    ]) {
+      writeFileSync(resolve(root, 'functions/.secret.local'), content);
+      assert.throws(
+        () => prepareEmulatorSecrets({ root }),
+        /Set APP_ACCESS_PASSWORD/,
+      );
+    }
+  }));
+
+test('local emulators allow matching app and admin passwords', () =>
+  fixture((root) => {
+    mkdirSync(resolve(root, 'functions'));
+    const content = 'APP_ACCESS_PASSWORD=same\nADMIN_ACCESS_PASSWORD=same\n';
+    writeFileSync(resolve(root, 'functions/.secret.local'), content);
+    prepareEmulatorSecrets({ root });
+    assert.equal(
+      readFileSync(resolve(root, 'dist/functions/.secret.local'), 'utf8'),
+      content,
     );
   }));

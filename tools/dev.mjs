@@ -1,3 +1,4 @@
+import { seedSophiePrompt } from './seed-sophie-prompt.mjs';
 import { waitForEmulators } from './emulator-readiness.mjs';
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -107,6 +108,8 @@ try {
     signal: readiness.signal,
   });
   readiness.signal.throwIfAborted();
+  process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+  await seedSophiePrompt({ projectId: 'demo-living-community-assistant' });
   console.log(
     JSON.stringify({ service: 'dev-launcher', event: 'emulators.ready' }),
   );

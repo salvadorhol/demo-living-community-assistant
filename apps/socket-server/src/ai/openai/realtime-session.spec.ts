@@ -1,10 +1,11 @@
+import { ASSISTANT_PROFILE } from '../assistant-profile.ts';
 import { VOICE_LIMITS } from '../../config.ts';
 import { createLogger } from '../../logger.ts';
 import { EventEmitter } from 'node:events';
 import type WebSocket from 'ws';
 import type { AudioOutputEvent } from '@living-community-assistant/types';
 import { createRealtimeVoice } from './realtime-session.ts';
-import { ASSISTANT_PROFILE } from '../assistant-profile.ts';
+import { loadTestPrompt, testPrompt } from '../../testing/prompt-fixture.ts';
 import { createSophieTools } from '../tools/sophie.ts';
 import { silentLogger } from '../../logger.ts';
 
@@ -33,7 +34,10 @@ function setup(
   const upstream = new Upstream();
   const connect = vi.fn(() => upstream as unknown as WebSocket);
   const events: AudioOutputEvent[] = [];
-  const factory = createRealtimeVoice(key, connect, { maxOutputQueueMs });
+  const factory = createRealtimeVoice(key, connect, {
+    maxOutputQueueMs,
+    loadPrompt: loadTestPrompt,
+  });
   const agent = factory.create({
     uid: 'private-user',
     logger,
@@ -66,7 +70,7 @@ it('greets a remembered visitor once, keeps the sales lookup mandatory, and pres
   const agent = createRealtimeVoice(
     'test-key',
     () => upstream as unknown as WebSocket,
-    { tools: registry },
+    { tools: registry, loadPrompt: loadTestPrompt },
   ).create({ uid: 'owner', output: () => undefined, logger: silentLogger });
   const pending = agent.initialize();
   upstream.emit('open');
@@ -142,7 +146,7 @@ it('waits for configuration and keeps credentials and hashed identity server-sid
   expect(upstream.sent[0]).toMatchObject({
     type: 'session.update',
     session: {
-      instructions: ASSISTANT_PROFILE.instructions,
+      instructions: testPrompt.content,
       audio: { input: { turn_detection: null }, output: { voice: 'marin' } },
     },
   });
@@ -536,7 +540,7 @@ it('waits for cancellation and truncation before creating one corrective reply',
     instructions: string;
     metadata: Record<string, string>;
   };
-  expect(response.instructions).toContain(ASSISTANT_PROFILE.instructions);
+  expect(response.instructions).toContain(testPrompt.content);
   expect(response.instructions).toContain(
     'Give a brief answer within community scope.',
   );
@@ -660,4 +664,97 @@ it('bounds control acknowledgements and surfaces timeout as a provider failure',
     f.upstream.sent.some((event) => event.type === 'response.create'),
   ).toBe(false);
   f.agent.dispose();
+});
+
+it('loads a fresh prompt for each call and keeps an active call snapshot', async () => {
+  const upstreams: Upstream[] = [];
+  let revision = 1;
+  const loadPrompt = vi.fn(async () => ({
+    ...testPrompt,
+    content: `Private instructions ${revision}`,
+    revision,
+  }));
+  const connect = vi.fn(() => {
+    const upstream = new Upstream();
+    upstreams.push(upstream);
+    return upstream as unknown as WebSocket;
+  });
+  const factory = createRealtimeVoice('key', connect, { loadPrompt });
+  const metadata = vi.fn();
+  const first = factory.create({ uid: 'owner', output: vi.fn(), metadata });
+  const pending = first.initialize();
+  expect(connect).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(0);
+  upstreams[0].emit('open');
+  upstreams[0].event({ type: 'session.updated' });
+  await pending;
+  expect(upstreams[0].sent[0]).toMatchObject({
+    session: { instructions: 'Private instructions 1' },
+  });
+  expect(metadata).toHaveBeenCalledWith({ sophiePromptRevision: '1' });
+  revision = 2;
+  first.beginInput();
+  first.pause();
+  await first.initialize();
+  first.beginInput();
+  expect(loadPrompt).toHaveBeenCalledTimes(1);
+  const second = factory.create({ uid: 'owner', output: vi.fn() });
+  const next = second.initialize();
+  await vi.advanceTimersByTimeAsync(0);
+  upstreams[1].emit('open');
+  upstreams[1].event({ type: 'session.updated' });
+  await next;
+  expect(upstreams[1].sent[0]).toMatchObject({
+    session: { instructions: 'Private instructions 2' },
+  });
+  first.dispose();
+  second.dispose();
+});
+
+it.each([
+  undefined,
+  { ...testPrompt, content: '  ' },
+  { ...testPrompt, revision: 0 },
+])(
+  'blocks invalid or missing prompt data before opening upstream',
+  async (value) => {
+    const connect = vi.fn();
+    const agent = createRealtimeVoice('key', connect, {
+      loadPrompt: () => value as typeof testPrompt,
+    }).create({ uid: 'owner', output: vi.fn() });
+    await expect(agent.initialize()).rejects.toThrow('prompt');
+    expect(connect).not.toHaveBeenCalled();
+  },
+);
+it('bounds prompt reads and ignores a late result after timeout', async () => {
+  let complete!: (value: typeof testPrompt) => void;
+  const connect = vi.fn();
+  const agent = createRealtimeVoice('key', connect, {
+    loadPrompt: () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  }).create({ uid: 'owner', output: vi.fn() });
+  const rejected = expect(agent.initialize()).rejects.toThrow('timed out');
+  await vi.advanceTimersByTimeAsync(5000);
+  await rejected;
+  complete(testPrompt);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(connect).not.toHaveBeenCalled();
+});
+it('does not open upstream after disposal during a prompt read', async () => {
+  let complete!: (value: typeof testPrompt) => void;
+  const connect = vi.fn();
+  const agent = createRealtimeVoice('key', connect, {
+    loadPrompt: () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  }).create({ uid: 'owner', output: vi.fn() });
+  const rejected = expect(agent.initialize()).rejects.toThrow();
+  agent.dispose();
+  await rejected;
+  complete(testPrompt);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(connect).not.toHaveBeenCalled();
 });

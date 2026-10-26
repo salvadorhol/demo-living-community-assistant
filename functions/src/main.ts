@@ -28,4 +28,4 @@ export {
   createFollowUpRequest,
 } from './tools/contact';
 
-export {unlockApp} from './access';
+export {unlockApp, unlockAdmin} from './access';

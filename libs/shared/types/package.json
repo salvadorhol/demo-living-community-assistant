@@ -8,6 +8,10 @@
     ".": {
       "@living-community-assistant/source": "./src/index.ts",
       "types": "./dist/index.d.ts"
+    },
+    "./prompt": {
+      "types": "./prompt.d.ts",
+      "default": "./prompt.js"
     }
   },
   "nx": {

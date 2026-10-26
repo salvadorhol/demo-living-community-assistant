@@ -29,13 +29,16 @@ export async function ensureAuthorizedSession(): Promise<User> {
   return user;
 }
 
-export async function unlockApp(password: string): Promise<void> {
+export async function unlockApp(
+  password: string,
+  admin = false,
+): Promise<void> {
   await ready();
   // Discard legacy or expired identities before the public callable attaches auth.
   if (auth.currentUser) await signOut(auth);
   const unlock = httpsCallable<{ password: string }, { customToken: string }>(
     functions,
-    'unlockApp',
+    admin ? 'unlockAdmin' : 'unlockApp',
   );
   const { data } = await unlock({ password });
   await signInWithCustomToken(auth, data.customToken);
@@ -47,6 +50,7 @@ export function lockApp(): Promise<void> {
 
 export function observeAccess(
   listener: (user: User | null, error?: string) => void,
+  claim: 'appAccess' | 'admin' = 'appAccess',
 ): () => void {
   let disposed = false;
   let revision = 0;
@@ -57,7 +61,7 @@ export function observeAccess(
       void ready()
         .then(async () => {
           const allowed =
-            user && (await user.getIdTokenResult()).claims.appAccess === true;
+            user && (await user.getIdTokenResult()).claims[claim] === true;
           if (!disposed && current === revision)
             listener(allowed ? user : null);
         })

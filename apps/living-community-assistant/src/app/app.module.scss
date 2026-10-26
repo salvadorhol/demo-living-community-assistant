@@ -328,3 +328,18 @@
     font: inherit;
   }
 }
+
+.promptEditor {
+  display: grid;
+  gap: 0.75rem;
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: 0.9rem/1.5 monospace;
+    padding: 1rem;
+    resize: vertical;
+  }
+  button {
+    margin-right: 0.75rem;
+  }
+}

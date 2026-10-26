@@ -1,4 +1,4 @@
-// Behavior lives here; assignment facts live behind the community tools.
+// Initial migration/test seed only. Runtime instructions are loaded from Firestore.
 export const SOPHIE_PROMPT = {
   // IDENTITY
   identity: `# Identity and voice

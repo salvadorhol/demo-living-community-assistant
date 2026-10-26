@@ -12,6 +12,7 @@ ENV NODE_ENV=production HOST=0.0.0.0
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/apps/socket-server/package.json ./apps/socket-server/package.json
 COPY --from=build /app/libs/shared/types/package.json ./libs/shared/types/package.json
+COPY --from=build /app/libs/shared/types/prompt.js ./libs/shared/types/prompt.js
 RUN npm ci --omit=dev --workspace=@living-community-assistant/socket-server --include-workspace-root=false && npm cache clean --force
 COPY --from=build /app/apps/socket-server/dist ./apps/socket-server/dist
 USER node
