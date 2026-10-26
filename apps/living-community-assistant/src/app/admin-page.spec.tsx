@@ -28,7 +28,12 @@ beforeEach(() => {
 it('loads and saves an edited prompt with its base revision', async () => {
   render(
     <RouterProvider
-      router={createMemoryRouter([{ path: '*', element: <AdminPage /> }])}
+      router={createMemoryRouter(
+        [{ path: '/admin/*', element: <AdminPage /> }],
+        {
+          initialEntries: ['/admin'],
+        },
+      )}
     />,
   );
   await screen.findByDisplayValue('Original prompt');
@@ -53,7 +58,12 @@ it('keeps the draft when a conflicting save fails', async () => {
   );
   render(
     <RouterProvider
-      router={createMemoryRouter([{ path: '*', element: <AdminPage /> }])}
+      router={createMemoryRouter(
+        [{ path: '/admin/*', element: <AdminPage /> }],
+        {
+          initialEntries: ['/admin'],
+        },
+      )}
     />,
   );
   await screen.findByDisplayValue('Original prompt');
@@ -68,7 +78,12 @@ it('allows creation when no prompt exists', async () => {
   mocks.load.mockResolvedValue(null);
   render(
     <RouterProvider
-      router={createMemoryRouter([{ path: '*', element: <AdminPage /> }])}
+      router={createMemoryRouter(
+        [{ path: '/admin/*', element: <AdminPage /> }],
+        {
+          initialEntries: ['/admin'],
+        },
+      )}
     />,
   );
   await screen.findByText(/No prompt is saved/);
@@ -76,4 +91,65 @@ it('allows creation when no prompt exists', async () => {
     (screen.getByRole('button', { name: 'Save prompt' }) as HTMLButtonElement)
       .disabled,
   ).toBe(true);
+});
+
+it('redirects to configuration and opens a blank review page without loading editors', async () => {
+  const router = createMemoryRouter(
+    [{ path: '/admin/*', element: <AdminPage /> }],
+    { initialEntries: ['/admin'] },
+  );
+  render(<RouterProvider router={router} />);
+  await screen.findByDisplayValue('Original prompt');
+  expect(router.state.location.pathname).toBe('/admin/configuration');
+  fireEvent.click(screen.getByRole('link', { name: 'Review' }));
+  await screen.findByRole('region', { name: 'Review' });
+  expect(screen.queryByLabelText('Sophie’s prompt')).toBeNull();
+  expect(
+    screen.getByRole('link', { name: 'Review' }).getAttribute('aria-current'),
+  ).toBe('page');
+});
+
+it('protects unsaved appointment changes when switching to review', async () => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  try {
+    render(
+      <RouterProvider
+        router={createMemoryRouter(
+          [{ path: '/admin/*', element: <AdminPage /> }],
+          { initialEntries: ['/admin/configuration'] },
+        )}
+      />,
+    );
+    const editor = await screen.findByLabelText('Appointments JSON');
+    fireEvent.change(editor, {
+      target: { value: '[{"date":"2026-11-02","time":"10:00"}]' },
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'Review' }));
+    await waitFor(() =>
+      expect(confirm).toHaveBeenCalledWith(
+        'Discard your unsaved configuration changes?',
+      ),
+    );
+    expect(screen.getByLabelText('Appointments JSON')).toBeTruthy();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('link', { name: 'Review' }));
+    await screen.findByRole('region', { name: 'Review' });
+  } finally {
+    confirm.mockRestore();
+  }
+});
+
+it('opens review directly without fetching configuration', async () => {
+  render(
+    <RouterProvider
+      router={createMemoryRouter(
+        [{ path: '/admin/*', element: <AdminPage /> }],
+        {
+          initialEntries: ['/admin/review'],
+        },
+      )}
+    />,
+  );
+  await screen.findByRole('region', { name: 'Review' });
+  expect(mocks.load).not.toHaveBeenCalled();
 });

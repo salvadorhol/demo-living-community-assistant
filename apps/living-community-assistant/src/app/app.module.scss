@@ -343,3 +343,149 @@
     margin-right: 0.75rem;
   }
 }
+
+.adminPage {
+  .header {
+    flex-wrap: wrap;
+  }
+}
+.adminNav {
+  flex-shrink: 0;
+  border-bottom: 1px solid #ededed;
+  > div {
+    display: flex;
+    gap: 28px;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 40px;
+  }
+  a {
+    padding: 18px 0 16px;
+    border-bottom: 2px solid transparent;
+    color: #737373;
+    text-decoration: none;
+    font-weight: 500;
+    &:hover {
+      color: #171717;
+    }
+    &:focus-visible {
+      outline: 2px solid #171717;
+      outline-offset: 3px;
+    }
+    &[aria-disabled='true'] {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    &.adminNavActive {
+      color: #171717;
+      border-bottom-color: #171717;
+    }
+  }
+}
+.adminScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 24px;
+  &:focus-visible {
+    outline: 2px solid #737373;
+    outline-offset: -2px;
+  }
+}
+.adminContent {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 40px 64px;
+  line-height: 1.6;
+  p {
+    color: #616161;
+    overflow-wrap: anywhere;
+  }
+  h2 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+  [role='alert'] {
+    color: #a32d2d;
+  }
+  [role='status'] {
+    color: #29674f;
+  }
+  button {
+    min-height: 42px;
+    padding: 10px 18px;
+    border: 1px solid #dedede;
+    border-radius: 8px;
+    background: #fff;
+    color: #171717;
+    &:hover:not(:disabled) {
+      background: #f5f5f5;
+    }
+    &[type='submit'] {
+      background: #171717;
+      color: #fff;
+      border-color: #171717;
+      &:hover:not(:disabled) {
+        background: #333;
+      }
+    }
+  }
+  .promptEditor {
+    min-width: 0;
+    label {
+      font-weight: 500;
+    }
+    textarea {
+      min-width: 0;
+      border: 1px solid #dedede;
+      border-radius: 8px;
+      background: #fafafa;
+      color: #171717;
+      &:focus-visible {
+        outline: 2px solid #171717;
+        outline-offset: 2px;
+      }
+    }
+    p {
+      margin: 0;
+      font-size: 12px;
+    }
+    > div {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    button {
+      margin: 0;
+    }
+  }
+}
+.adminIntro {
+  margin-bottom: 32px;
+  h2 {
+    font-size: 22px;
+  }
+  p {
+    margin: 8px 0 0;
+  }
+}
+.adminSection {
+  margin-bottom: 32px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid #ededed;
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+@media (max-width: 600px) {
+  .adminNav > div {
+    padding: 0 20px;
+  }
+  .adminContent {
+    padding: 24px 20px 48px;
+  }
+}

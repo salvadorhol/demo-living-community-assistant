@@ -55,7 +55,10 @@ export function AppointmentsEditor({
     };
   }, [attempt]);
   return (
-    <section aria-label="Appointment configuration">
+    <section
+      className={styles['adminSection']}
+      aria-label="Appointment configuration"
+    >
       <h2>Available appointments</h2>
       <p>
         Edit up to 20 date/time options in America/New_York. Each appointment is

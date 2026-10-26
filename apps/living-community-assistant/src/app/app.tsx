@@ -33,7 +33,7 @@ export function App() {
   return (
     <Routes>
       <Route
-        path="/admin"
+        path="/admin/*"
         element={
           <AccessGate key="admin" admin>
             <AdminPage />

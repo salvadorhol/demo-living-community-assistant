@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useBlocker } from 'react-router-dom';
+import {
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useNavigate,
+  useBlocker,
+} from 'react-router-dom';
 import type { SophiePrompt } from '@living-community-assistant/types/prompt';
 import {
   MAX_PROMPT_LENGTH,
@@ -12,6 +19,112 @@ import { AppointmentsEditor } from './appointments-editor';
 
 export function AdminPage() {
   const navigate = useNavigate();
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      currentLocation.pathname !== nextLocation.pathname && (dirty || busy),
+  );
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    if (busy) blocker.reset();
+    else if (window.confirm('Discard your unsaved configuration changes?'))
+      blocker.proceed();
+    else blocker.reset();
+  }, [blocker, busy]);
+  useEffect(() => {
+    if (!dirty && !busy) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty, busy]);
+  return (
+    <main className={`${styles['page']} ${styles['adminPage']}`}>
+      <header className={styles['header']}>
+        <h1>Sophie administration</h1>
+        <div className={styles['connection']}>
+          <button
+            className={styles['textButton']}
+            disabled={busy}
+            onClick={() => navigate('/')}
+          >
+            Open assistant
+          </button>
+          <button
+            className={styles['textButton']}
+            disabled={busy}
+            onClick={() => {
+              if (
+                !dirty ||
+                window.confirm('Discard your unsaved configuration changes?')
+              ) {
+                void lockApp().catch(() =>
+                  setError('Could not sign out. Please retry.'),
+                );
+              }
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+      <nav className={styles['adminNav']} aria-label="Administration">
+        <div>
+          {['configuration', 'review'].map((page) => (
+            <NavLink
+              key={page}
+              to={`/admin/${page}`}
+              aria-disabled={busy || undefined}
+              onClick={(event) => {
+                if (busy) event.preventDefault();
+              }}
+              className={({ isActive }) =>
+                isActive ? styles['adminNavActive'] : undefined
+              }
+            >
+              {page === 'configuration' ? 'Configuration' : 'Review'}
+            </NavLink>
+          ))}
+        </div>
+      </nav>
+      <div
+        className={styles['adminScroll']}
+        tabIndex={0}
+        role="region"
+        aria-label="Administration content"
+      >
+        <div className={styles['adminContent']}>
+          {error && <p role="alert">{error}</p>}
+          <Routes>
+            <Route
+              path="configuration"
+              element={
+                <AdminConfiguration onDirty={setDirty} onBusy={setBusy} />
+              }
+            />
+            <Route path="review" element={<section aria-label="Review" />} />
+            <Route
+              path="*"
+              element={<Navigate to="/admin/configuration" replace />}
+            />
+          </Routes>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function AdminConfiguration({
+  onDirty,
+  onBusy,
+}: {
+  onDirty(dirty: boolean): void;
+  onBusy(busy: boolean): void;
+}) {
   const [saved, setSaved] = useState<SophiePrompt | null>();
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
@@ -23,13 +136,14 @@ export function AdminPage() {
   const [appointmentsBusy, setAppointmentsBusy] = useState(false);
   const promptDirty = saved !== undefined && draft !== (saved?.content ?? '');
   const dirty = promptDirty || appointmentsDirty;
-  const blocker = useBlocker(dirty && !busy);
   useEffect(() => {
-    if (blocker.state !== 'blocked') return;
-    if (window.confirm('Discard your unsaved prompt changes?'))
-      blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
+    onDirty(dirty);
+    return () => onDirty(false);
+  }, [dirty, onDirty]);
+  useEffect(() => {
+    onBusy(busy || appointmentsBusy);
+    return () => onBusy(false);
+  }, [busy, appointmentsBusy, onBusy]);
   useEffect(() => {
     let disposed = false;
     setLoading(true);
@@ -51,138 +165,120 @@ export function AdminPage() {
       disposed = true;
     };
   }, [attempt]);
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
-  const discardAllowed = () =>
-    !dirty || window.confirm('Discard your unsaved prompt changes?');
   return (
-    <main className={styles['page']}>
-      <header className={styles['header']}>
-        <h1>Sophie prompt administration</h1>
-        <div className={styles['connection']}>
-          <button
-            disabled={busy || appointmentsBusy}
-            onClick={() => {
-              navigate('/');
-            }}
-          >
-            Open assistant
+    <>
+      <div className={styles['adminIntro']}>
+        <h2>Configuration</h2>
+        <p>Manage Sophie’s prompt and appointment availability.</p>
+      </div>
+      <section
+        className={styles['adminSection']}
+        aria-label="Prompt configuration"
+      >
+        <h2>Assistant prompt</h2>
+        <p>
+          Saved changes apply to new calls. Active calls keep their starting
+          prompt.
+        </p>
+        {loading ? (
+          <p role="status">Loading prompt…</p>
+        ) : saved === undefined ? (
+          <button onClick={() => setAttempt((value) => value + 1)}>
+            Retry loading prompt
           </button>
-          <button
-            disabled={busy || appointmentsBusy}
-            onClick={() => {
-              if (discardAllowed())
-                void lockApp().catch(() =>
-                  setError('Could not sign out. Please retry.'),
-                );
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-      <p>
-        Saved changes apply to new calls. Active calls keep their starting
-        prompt.
-      </p>
-      {loading ? (
-        <p role="status">Loading prompt…</p>
-      ) : saved === undefined ? (
-        <button onClick={() => setAttempt((value) => value + 1)}>
-          Retry loading prompt
-        </button>
-      ) : (
-        <>
-          {saved ? (
-            <p>
-              Revision {saved.revision} · Saved{' '}
-              {new Date(saved.updatedAt.toMillis()).toLocaleString()}
-            </p>
-          ) : (
-            <p>No prompt is saved. New calls are blocked until you save one.</p>
-          )}
-          <form
-            className={styles['promptEditor']}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (busy || !promptDirty || !validPromptContent(draft)) return;
-              setBusy(true);
-              setError(undefined);
-              setMessage(undefined);
-              void savePrompt(draft, saved?.revision ?? 0)
-                .then(async () => {
-                  // The write succeeded even if the following refresh fails: never offer
-                  // an old revision for another save in that case.
-                  setSaved(undefined);
-                  const latest = await loadPrompt();
-                  setSaved(latest);
-                  setDraft(latest?.content ?? '');
-                  setMessage(
-                    'Prompt saved. New calls will use the saved version.',
-                  );
-                })
-                .catch((failure: unknown) =>
-                  setError(
-                    failure instanceof Error
-                      ? failure.message
-                      : 'Could not save the prompt. Please retry.',
-                  ),
-                )
-                .finally(() => setBusy(false));
-            }}
-          >
-            <label htmlFor="sophie-prompt">Sophie’s prompt</label>
-            <textarea
-              id="sophie-prompt"
-              rows={24}
-              maxLength={MAX_PROMPT_LENGTH}
-              value={draft}
-              disabled={busy || appointmentsBusy}
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <p>
-              {draft.length.toLocaleString()} /{' '}
-              {MAX_PROMPT_LENGTH.toLocaleString()} characters
-            </p>
-            <div>
-              <button
-                type="submit"
-                disabled={busy || !promptDirty || !validPromptContent(draft)}
-              >
-                {busy ? 'Saving…' : 'Save prompt'}
-              </button>
-              <button
-                type="button"
+        ) : (
+          <>
+            {saved ? (
+              <p>
+                Revision {saved.revision} · Saved{' '}
+                {new Date(saved.updatedAt.toMillis()).toLocaleString()}
+              </p>
+            ) : (
+              <p>
+                No prompt is saved. New calls are blocked until you save one.
+              </p>
+            )}
+            <form
+              className={styles['promptEditor']}
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (busy || !promptDirty || !validPromptContent(draft)) return;
+                setBusy(true);
+                setError(undefined);
+                setMessage(undefined);
+                void savePrompt(draft, saved?.revision ?? 0)
+                  .then(async () => {
+                    // The write succeeded even if the following refresh fails: never offer
+                    // an old revision for another save in that case.
+                    setSaved(undefined);
+                    const latest = await loadPrompt();
+                    setSaved(latest);
+                    setDraft(latest?.content ?? '');
+                    setMessage(
+                      'Prompt saved. New calls will use the saved version.',
+                    );
+                  })
+                  .catch((failure: unknown) =>
+                    setError(
+                      failure instanceof Error
+                        ? failure.message
+                        : 'Could not save the prompt. Please retry.',
+                    ),
+                  )
+                  .finally(() => setBusy(false));
+              }}
+            >
+              <label htmlFor="sophie-prompt">Sophie’s prompt</label>
+              <textarea
+                id="sophie-prompt"
+                rows={24}
+                maxLength={MAX_PROMPT_LENGTH}
+                value={draft}
                 disabled={busy || appointmentsBusy}
-                onClick={() => {
-                  if (
+                onChange={(event) => setDraft(event.target.value)}
+              />
+              <p>
+                {draft.length.toLocaleString()} /{' '}
+                {MAX_PROMPT_LENGTH.toLocaleString()} characters
+              </p>
+              <div>
+                <button
+                  type="submit"
+                  disabled={
+                    busy ||
+                    appointmentsBusy ||
                     !promptDirty ||
-                    window.confirm('Discard your unsaved prompt changes?')
-                  ) {
-                    setMessage(undefined);
-                    setAttempt((value) => value + 1);
+                    !validPromptContent(draft)
                   }
-                }}
-              >
-                Discard changes
-              </button>
-            </div>
-          </form>
-        </>
-      )}
+                >
+                  {busy ? 'Saving…' : 'Save prompt'}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || appointmentsBusy}
+                  onClick={() => {
+                    if (
+                      !promptDirty ||
+                      window.confirm('Discard your unsaved prompt changes?')
+                    ) {
+                      setMessage(undefined);
+                      setAttempt((value) => value + 1);
+                    }
+                  }}
+                >
+                  Discard changes
+                </button>
+              </div>
+            </form>
+          </>
+        )}
+        {message && <p role="status">{message}</p>}
+        {error && <p role="alert">{error}</p>}
+      </section>
       <AppointmentsEditor
         onDirty={setAppointmentsDirty}
         onBusy={setAppointmentsBusy}
       />
-      {message && <p role="status">{message}</p>}
-      {error && <p role="alert">{error}</p>}
-    </main>
+    </>
   );
 }
