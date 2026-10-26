@@ -11,6 +11,7 @@ import {
   getReviewAudio,
   generateCallReview,
   deleteCall,
+  type LoadedReviewAudio,
 } from './api/review';
 import styles from './review-page.module.scss';
 const message = (error: unknown) =>
@@ -230,7 +231,9 @@ function CallDetail({uid, callId}: {uid: string; callId: string}) {
   const [actionError, setActionError] = useState('');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
-  const [audio, setAudio] = useState<{url: string; expiresAt: number}>();
+  const [audio, setAudio] = useState<LoadedReviewAudio>();
+  const audioResource = useRef<LoadedReviewAudio | undefined>(undefined);
+  const audioRequest = useRef(0);
   const [audioError, setAudioError] = useState('');
   const [audioBusy, setAudioBusy] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState<string[]>([]);
@@ -238,8 +241,12 @@ function CallDetail({uid, callId}: {uid: string; callId: string}) {
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
+    const requests = audioRequest;
     return () => {
       mounted.current = false;
+      requests.current++;
+      audioResource.current?.dispose();
+      audioResource.current = undefined;
     };
   }, []);
   useEffect(() => {
@@ -270,17 +277,26 @@ function CallDetail({uid, callId}: {uid: string; callId: string}) {
     return () => clearInterval(timer);
   }, [running, deleting]);
   function loadAudio() {
+    const request = ++audioRequest.current;
     setAudioBusy(true);
     setAudioError('');
     void getReviewAudio({uid, callId})
       .then(value => {
-        if (mounted.current) setAudio(value);
+        if (!mounted.current || request !== audioRequest.current) {
+          value.dispose();
+          return;
+        }
+        audioResource.current?.dispose();
+        audioResource.current = value;
+        setAudio(value);
       })
       .catch(e => {
-        if (mounted.current) setAudioError(message(e));
+        if (mounted.current && request === audioRequest.current)
+          setAudioError(message(e));
       })
       .finally(() => {
-        if (mounted.current) setAudioBusy(false);
+        if (mounted.current && request === audioRequest.current)
+          setAudioBusy(false);
       });
   }
   const result = call?.latestReview?.result;
@@ -320,7 +336,14 @@ function CallDetail({uid, callId}: {uid: string; callId: string}) {
             disabled={running || deleting}
             onBusy={value => {
               setDeleting(value);
-              if (value) player.current?.pause();
+              if (value) {
+                player.current?.pause();
+                audioRequest.current++;
+                audioResource.current?.dispose();
+                audioResource.current = undefined;
+                setAudio(undefined);
+                setAudioBusy(false);
+              }
             }}
             onDeleted={() =>
               navigate('/admin/review', {

@@ -39,7 +39,7 @@ const call = {
   latestReview: null,
 };
 function open(path = '/admin/review') {
-  render(
+  return render(
     <RouterProvider
       router={createMemoryRouter(
         [
@@ -58,6 +58,7 @@ beforeEach(() => {
   mocks.audio.mockResolvedValue({
     url: 'https://example.test/audio',
     expiresAt: Date.now() + 60000,
+    dispose: vi.fn(),
   });
   mocks.generate.mockResolvedValue({});
   mocks.delete.mockResolvedValue({
@@ -243,5 +244,65 @@ it('prevents duplicate deletion requests and leaves other calls usable after suc
     );
   } finally {
     confirm.mockRestore();
+  }
+});
+
+it('releases Blob audio on refresh and unmount', async () => {
+  const first = {url: 'blob:first', dispose: vi.fn()};
+  const second = {url: 'blob:second', dispose: vi.fn()};
+  mocks.audio.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const view = open('/admin/review/visitor/one');
+  await screen.findByText('I would like a tour.');
+  fireEvent.click(screen.getByRole('button', {name: 'Load audio'}));
+  await screen.findByLabelText('Playback speed');
+  fireEvent.click(screen.getByRole('button', {name: 'Refresh audio access'}));
+  await waitFor(() => expect(first.dispose).toHaveBeenCalledOnce());
+  expect(document.querySelector('audio')?.getAttribute('src')).toBe(
+    'blob:second'
+  );
+  view.unmount();
+  expect(second.dispose).toHaveBeenCalledOnce();
+});
+it('cleans up audio that finishes downloading after leaving the call', async () => {
+  let finish!: (value: {url: string; dispose(): void}) => void;
+  mocks.audio.mockImplementationOnce(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      })
+  );
+  const view = open('/admin/review/visitor/one');
+  await screen.findByText('I would like a tour.');
+  fireEvent.click(screen.getByRole('button', {name: 'Load audio'}));
+  expect(
+    (screen.getByRole('button', {name: 'Loading audio…'}) as HTMLButtonElement)
+      .disabled
+  ).toBe(true);
+  view.unmount();
+  const dispose = vi.fn();
+  finish({url: 'blob:late', dispose});
+  await waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+});
+
+it('releases loaded audio as soon as call deletion begins', async () => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const pause = vi
+    .spyOn(HTMLMediaElement.prototype, 'pause')
+    .mockImplementation(() => undefined);
+  const dispose = vi.fn();
+  mocks.audio.mockResolvedValueOnce({url: 'blob:recording', dispose});
+  try {
+    open('/admin/review/visitor/one');
+    await screen.findByText('I would like a tour.');
+    fireEvent.click(screen.getByRole('button', {name: 'Load audio'}));
+    await screen.findByLabelText('Playback speed');
+    fireEvent.click(screen.getByRole('button', {name: /^Delete call /}));
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(pause).toHaveBeenCalledOnce();
+    await screen.findByText('Call deleted.');
+    expect(dispose).toHaveBeenCalledOnce();
+  } finally {
+    confirm.mockRestore();
+    pause.mockRestore();
   }
 });

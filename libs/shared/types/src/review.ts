@@ -53,6 +53,9 @@ export interface ReviewCallKey {
   uid: string;
   callId: string;
 }
+export type ReviewAudioAccess =
+  | {kind: 'signed-url'; url: string; expiresAt: number}
+  | {kind: 'storage'; bucket: string; objectPath: string; sizeBytes: number};
 export interface ReviewCallPage {
   calls: ReviewCallSummary[];
   nextCursor: {startedAt: string; path: string} | null;

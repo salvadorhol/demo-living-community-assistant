@@ -87,3 +87,9 @@ node --env-file-if-exists=apps/socket-server/.env apps/socket-server/src/testing
 ```
 
 The evaluator reports per-case probabilities, language, and pass/fail without printing transcript text or credentials. These examples are an initial regression set, not a guarantee of classification accuracy. Normal unit/integration tests use deterministic fake verdicts and never call OpenAI.
+
+### Large recordings in admin review
+
+Local admin review downloads recordings directly from the Storage emulator using the signed-in admin's Firebase credentials, then plays a browser Blob URL. This supports WAV recordings up to 200 MiB instead of embedding audio in the Functions JSON response. The full recording downloads before playback starts; Blob URLs are released on refresh, navigation, and deletion. Production continues to use expiring signed URLs.
+
+Run the updated frontend and Functions together and restart local emulators to load the updated Storage rules. Admins can read call recordings; client uploads, deletion, and listing remain denied. Existing recordings need no migration.

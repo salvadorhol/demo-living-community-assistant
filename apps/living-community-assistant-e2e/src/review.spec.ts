@@ -17,7 +17,8 @@ const recording = getStorage(app)
   .file(`${path}/recording.wav`);
 
 test.beforeAll(async () => {
-  const audio = Buffer.alloc(44 + 48000);
+  const pcmBytes = 180 * 48000; // Three minutes: above the old 6 MiB inline limit.
+  const audio = Buffer.alloc(44 + pcmBytes);
   audio.write('RIFF', 0);
   audio.writeUInt32LE(audio.length - 8, 4);
   audio.write('WAVEfmt ', 8);
@@ -29,19 +30,19 @@ test.beforeAll(async () => {
   audio.writeUInt16LE(2, 32);
   audio.writeUInt16LE(16, 34);
   audio.write('data', 36);
-  audio.writeUInt32LE(48000, 40);
+  audio.writeUInt32LE(pcmBytes, 40);
   await recording.save(audio, {metadata: {contentType: 'audio/wav'}});
   await call.set({
     uid,
     startedAt: '2026-10-25T12:00:00Z',
-    endedAt: '2026-10-25T12:01:00Z',
+    endedAt: '2026-10-25T12:03:00Z',
     status: 'ended',
     recordingStatus: 'saved',
     transcriptionStatus: 'available',
     recording: {
       bucket: `${projectId}.firebasestorage.app`,
       objectPath: `${path}/recording.wav`,
-      durationMs: 1000,
+      durationMs: 180000,
     },
   });
   await call.collection('transcripts').doc('visitor-turn').set({
@@ -75,7 +76,7 @@ for (const width of [1280, 390]) {
       .getByLabel('Password', {exact: true})
       .fill('fixture-admin-password');
     await page.getByRole('button', {name: 'Unlock', exact: true}).click();
-    await page.getByRole('link', {name: /1 seconds/}).click();
+    await page.getByRole('link', {name: /180 seconds/}).click();
     await expect(page).toHaveURL(new RegExp(`/admin/review/${uid}/${callId}$`));
     await expect(
       page.getByText('Can I schedule a tour for my mother?')
@@ -83,6 +84,14 @@ for (const width of [1280, 390]) {
     await page.getByRole('button', {name: 'Load audio', exact: true}).click();
     const audio = page.locator('audio');
     await expect(audio).toHaveJSProperty('readyState', 4);
+    await expect(audio).toHaveAttribute('src', /^blob:/);
+    await expect(audio).toHaveJSProperty('duration', 180);
+    await audio.evaluate((node: HTMLAudioElement) => {
+      node.currentTime = 120;
+    });
+    await expect
+      .poll(() => audio.evaluate((node: HTMLAudioElement) => node.currentTime))
+      .toBeGreaterThanOrEqual(120);
     await audio.evaluate((node: HTMLAudioElement) => node.play());
     await expect
       .poll(() => audio.evaluate((node: HTMLAudioElement) => node.currentTime))
@@ -161,7 +170,7 @@ for (const width of [1280, 390]) {
     ).toBe(true);
     await page.getByRole('link', {name: 'All calls'}).click();
     await expect(
-      page.getByRole('link', {name: /1 seconds.*4\/5/})
+      page.getByRole('link', {name: /180 seconds.*4\/5/})
     ).toBeVisible();
   });
 }

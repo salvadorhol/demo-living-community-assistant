@@ -12,6 +12,7 @@ import type {
   ReviewCallSummary,
   TranscriptUpdate,
   ReviewAttempt,
+  ReviewAudioAccess,
 } from '@living-community-assistant/types';
 import {
   REVIEW_MODEL,
@@ -147,43 +148,63 @@ function recordingStorage() {
   ]);
   return {app, emulator, allowedBuckets};
 }
-export const getReviewAudio = onCall(options, async request => {
-  requireReviewAdmin(request);
-  const ref = callRef(request.data);
-  const data = await existing(ref);
-  const {app, emulator, allowedBuckets} = recordingStorage();
-  const bucket: unknown = data.recording?.bucket;
-  if (
-    data.status === 'deleting' ||
-    data.recordingStatus !== 'saved' ||
-    typeof bucket !== 'string' ||
-    !allowedBuckets.has(bucket) ||
-    data.recording?.objectPath !== `${ref.path}/recording.wav`
-  )
-    throw new HttpsError('failed-precondition', 'Recording unavailable.');
-  const file = getStorage(app).bucket(bucket).file(data.recording.objectPath);
-  const expiresAt = Date.now() + 10 * 60 * 1000;
-  // Local emulators have no signing identity. Return small test recordings inline.
-  if (emulator) {
-    const [metadata] = await file.getMetadata();
-    if (Number(metadata.size) > 6 * 1024 * 1024)
-      throw new HttpsError(
-        'resource-exhausted',
-        'Emulator playback supports recordings up to 6 MB.'
-      );
-    const [audio] = await file.download();
-    return {
-      url: `data:audio/wav;base64,${audio.toString('base64')}`,
-      expiresAt,
-    };
+export const getReviewAudio = onCall(
+  options,
+  async (request): Promise<ReviewAudioAccess> => {
+    requireReviewAdmin(request);
+    const ref = callRef(request.data);
+    const data = await existing(ref);
+    const {app, emulator, allowedBuckets} = recordingStorage();
+    const bucket: unknown = data.recording?.bucket;
+    if (
+      data.status === 'deleting' ||
+      data.recordingStatus !== 'saved' ||
+      typeof bucket !== 'string' ||
+      !allowedBuckets.has(bucket) ||
+      data.recording?.objectPath !== `${ref.path}/recording.wav`
+    )
+      throw new HttpsError('failed-precondition', 'Recording unavailable.');
+    const file = getStorage(app).bucket(bucket).file(data.recording.objectPath);
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    // Local emulators have no signing identity. Download through authenticated
+    // browser Storage access instead of putting the entire recording in JSON.
+    if (emulator) {
+      const [metadata] = await file
+        .getMetadata()
+        .catch((error: {code?: number}) => {
+          throw new HttpsError(
+            error.code === 404 ? 'not-found' : 'unavailable',
+            error.code === 404
+              ? 'Recording not found.'
+              : 'Recording metadata could not be loaded. Please retry.'
+          );
+        });
+      const sizeBytes = Number(metadata.size);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0)
+        throw new HttpsError(
+          'failed-precondition',
+          'Recording size is unavailable.'
+        );
+      if (sizeBytes > 200 * 1024 * 1024)
+        throw new HttpsError(
+          'resource-exhausted',
+          'Local playback supports recordings up to 200 MiB.'
+        );
+      return {
+        kind: 'storage',
+        bucket,
+        objectPath: data.recording.objectPath,
+        sizeBytes,
+      };
+    }
+    const [url] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: expiresAt,
+    });
+    return {kind: 'signed-url', url, expiresAt};
   }
-  const [url] = await file.getSignedUrl({
-    version: 'v4',
-    action: 'read',
-    expires: expiresAt,
-  });
-  return {url, expiresAt};
-});
+);
 export const generateCallReview = onCall(
   {...options, secrets: [apiKey], timeoutSeconds: 180},
   async request => {

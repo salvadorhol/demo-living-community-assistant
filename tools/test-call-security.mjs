@@ -36,9 +36,9 @@ import { getFirestore as adminFirestore } from 'firebase-admin/firestore';
 import { getStorage as adminStorage } from 'firebase-admin/storage';
 const projectId = 'demo-living-community-assistant';
 const bucket = `${projectId}.firebasestorage.app`;
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8180';
-process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9190';
-process.env.FIREBASE_STORAGE_EMULATOR_HOST = '127.0.0.1:9298';
+process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8180';
+process.env.FIREBASE_AUTH_EMULATOR_HOST ??= '127.0.0.1:9190';
+process.env.FIREBASE_STORAGE_EMULATOR_HOST ??= '127.0.0.1:9298';
 const admin = initializeAdmin(
   { projectId, storageBucket: bucket },
   'rules-admin',
@@ -50,11 +50,29 @@ function client(name) {
     name,
   );
   const auth = getAuth(app);
-  connectAuthEmulator(auth, 'http://127.0.0.1:9190', { disableWarnings: true });
+  connectAuthEmulator(
+    auth,
+    `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}`,
+    { disableWarnings: true },
+  );
   const db = getFirestore(app);
-  connectFirestoreEmulator(db, '127.0.0.1', 8180);
+  const firestoreEndpoint = new URL(
+    `http://${process.env.FIRESTORE_EMULATOR_HOST}`,
+  );
+  connectFirestoreEmulator(
+    db,
+    firestoreEndpoint.hostname,
+    Number(firestoreEndpoint.port),
+  );
   const storage = getStorage(app);
-  connectStorageEmulator(storage, '127.0.0.1', 9298);
+  const storageEndpoint = new URL(
+    `http://${process.env.FIREBASE_STORAGE_EMULATOR_HOST}`,
+  );
+  connectStorageEmulator(
+    storage,
+    storageEndpoint.hostname,
+    Number(storageEndpoint.port),
+  );
   const value = { app, auth, db, storage };
   clients.push(value);
   return value;
@@ -64,6 +82,10 @@ try {
   const other = client('other');
   const anonymous = client('unauthenticated');
   const unclaimed = client('unclaimed');
+  const reviewer = client('review-admin');
+  const reviewerUser = (await signInAnonymously(reviewer.auth)).user;
+  await adminAuth(admin).setCustomUserClaims(reviewerUser.uid, { admin: true });
+  await reviewerUser.getIdToken(true);
   const { user } = await signInAnonymously(owner.auth);
   // Retain a valid token for the very same UID without the authorization claim.
   await signInWithCustomToken(
@@ -98,7 +120,7 @@ try {
     .save(Buffer.from('RIFF-private-audio'), {
       metadata: { contentType: 'audio/wav' },
     });
-  for (const c of [owner, other, anonymous, unclaimed]) {
+  for (const c of [owner, other, anonymous, unclaimed, reviewer]) {
     for (const document of [
       `sessions/${user.uid}`,
       followUp,
@@ -123,7 +145,7 @@ try {
         );
     }
     const object = ref(c.storage, recording);
-    if (c === owner)
+    if (c === owner || c === reviewer)
       assert.equal(
         Buffer.from(await getBytes(object)).toString(),
         'RIFF-private-audio',
@@ -152,7 +174,7 @@ try {
     (e) => e.code === 'permission-denied',
   );
   console.log(
-    'Call security passed: owner reads, cross-identity denial, and all client writes denied in Firestore and Storage.',
+    'Call security passed: owner and admin audio reads, cross-identity denial, and all client writes denied in Firestore and Storage.',
   );
 } finally {
   await Promise.all(

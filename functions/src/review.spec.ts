@@ -414,9 +414,13 @@ it('plays recordings from the default local development bucket in emulator mode'
   await expect(
     (getReviewAudio as unknown as Handler)({auth: admin, data})
   ).resolves.toMatchObject({
-    url: `data:audio/wav;base64,${Buffer.from('local recording').toString('base64')}`,
+    kind: 'storage',
+    bucket: 'demo-test.firebasestorage.app',
+    objectPath: 'sessions/visitor/calls/call/recording.wav',
+    sizeBytes: 728984,
   });
   expect(mocks.signed).not.toHaveBeenCalled();
+  expect(mocks.download).not.toHaveBeenCalled();
 });
 it('does not allow the default local bucket in production', async () => {
   mocks.get.mockResolvedValue({
@@ -601,4 +605,46 @@ it('rejects review generation when deletion won the transaction race', async () 
     (generateCallReview as unknown as Handler)({auth: admin, data})
   ).rejects.toMatchObject({code: 'failed-precondition'});
   expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+it.each([7 * 1024 * 1024, 200 * 1024 * 1024])(
+  'returns only a Storage reference for an emulator recording of %s bytes',
+  async sizeBytes => {
+    vi.stubEnv('FUNCTIONS_EMULATOR', 'true');
+    vi.stubEnv('FIREBASE_STORAGE_EMULATOR_HOST', '127.0.0.1:9199');
+    mocks.metadata.mockResolvedValue([{size: String(sizeBytes)}]);
+    expect(
+      await (getReviewAudio as unknown as Handler)({auth: admin, data})
+    ).toEqual({
+      kind: 'storage',
+      bucket: 'demo-test-call-recordings',
+      objectPath: 'sessions/visitor/calls/call/recording.wav',
+      sizeBytes,
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(mocks.signed).not.toHaveBeenCalled();
+  }
+);
+it('rejects emulator recordings above the supported 200 MiB limit', async () => {
+  vi.stubEnv('FUNCTIONS_EMULATOR', 'true');
+  vi.stubEnv('FIREBASE_STORAGE_EMULATOR_HOST', '127.0.0.1:9199');
+  mocks.metadata.mockResolvedValue([{size: String(200 * 1024 * 1024 + 1)}]);
+  await expect(
+    (getReviewAudio as unknown as Handler)({auth: admin, data})
+  ).rejects.toMatchObject({
+    code: 'resource-exhausted',
+    message: expect.stringContaining('200 MiB'),
+  });
+  expect(mocks.download).not.toHaveBeenCalled();
+});
+it('reports a missing emulator recording without leaking Storage errors', async () => {
+  vi.stubEnv('FUNCTIONS_EMULATOR', 'true');
+  vi.stubEnv('FIREBASE_STORAGE_EMULATOR_HOST', '127.0.0.1:9199');
+  mocks.metadata.mockRejectedValue({
+    code: 404,
+    message: 'private provider body',
+  });
+  await expect(
+    (getReviewAudio as unknown as Handler)({auth: admin, data})
+  ).rejects.toMatchObject({code: 'not-found', message: 'Recording not found.'});
 });
