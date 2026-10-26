@@ -55,7 +55,7 @@ function setup(
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
-it('greets a remembered visitor once, allows immediate appointment lookup, and preserves Pause/Resume', async () => {
+it('greets a remembered visitor once, keeps business lookups behind the director attempt, and preserves Pause/Resume', async () => {
   const upstream = new Upstream();
   const registry = createSophieTools(
     { projectId: 'demo-tools', region: 'us-central1' },
@@ -80,6 +80,9 @@ it('greets a remembered visitor once, allows immediate appointment lookup, and p
       tool_choice: 'auto',
     },
   });
+  expect(registry.definitions.map((t) => t.name)).not.toContain(
+    'get_available_appointments',
+  );
   upstream.event({ type: 'session.updated' });
   await pending;
   agent.beginInput();

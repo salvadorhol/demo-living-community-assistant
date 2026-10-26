@@ -295,3 +295,46 @@ it('bounds closing when no playback acknowledgement arrives', async () => {
     vi.useRealTimers();
   }
 });
+
+it('immediately ends and saves an explicit visitor stop without waiting for playback', async () => {
+  const f = fixture();
+  await f.session.start(stream());
+  f.provider().closing?.({ reason: 'visitor_requested', immediate: true });
+  expect(f.events.output).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'closing', reason: 'visitor_requested' }),
+  );
+  await vi.waitFor(() =>
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'saved',
+        endReason: 'visitor_requested',
+      }),
+    ),
+  );
+  expect(f.agent.dispose).toHaveBeenCalledOnce();
+  await f.session.close();
+  expect(f.agent.dispose).toHaveBeenCalledOnce();
+});
+it('waits for the natural goodbye before saving conversation_complete', async () => {
+  const f = fixture();
+  await f.session.start(stream());
+  f.provider().closing?.({ reason: 'conversation_complete', immediate: false });
+  f.provider().output({ type: 'start', stream: stream('goodbye') });
+  f.provider().output({
+    type: 'chunk',
+    chunk: { streamId: 'goodbye', sequence: 0, data: new Uint8Array(4800) },
+  });
+  f.provider().closingResponseDone?.();
+  f.session.progress({ streamId: 'goodbye', playedMs: 100 });
+  expect(f.agent.dispose).not.toHaveBeenCalled();
+  f.provider().output({ type: 'end', streamId: 'goodbye' });
+  await vi.waitFor(() =>
+    expect(f.events.status).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'saved',
+        endReason: 'conversation_complete',
+      }),
+    ),
+  );
+  await f.session.close();
+});

@@ -1,3 +1,4 @@
+import type { CallEndReason } from '@living-community-assistant/types';
 import type { AppLogger } from '../../logger.ts';
 
 export interface ToolContext {
@@ -7,7 +8,14 @@ export interface ToolContext {
   readonly signal: AbortSignal;
   readonly logger: AppLogger;
 }
+export interface TerminalAction {
+  reason: CallEndReason;
+  immediate: boolean;
+  message?: string;
+}
+
 export interface ToolDefinition {
+  readonly terminal?: boolean;
   readonly write?: boolean;
   enabled?(): boolean;
   readonly timeoutMs?: number;
@@ -35,7 +43,7 @@ export const isEmptyArguments = (
 ): value is Record<string, never> =>
   Boolean(
     value &&
-      typeof value === 'object' &&
-      !Array.isArray(value) &&
-      Object.keys(value).length === 0,
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0,
   );

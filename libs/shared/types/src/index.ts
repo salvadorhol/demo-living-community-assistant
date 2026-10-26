@@ -57,12 +57,12 @@ export interface TranscriptUpdate {
   isFinal: boolean;
 }
 
+export type CallEndReason =
+  'demo_sales_handoff' | 'visitor_requested' | 'conversation_complete';
+
 export interface ServerToClientEvents {
   'call:status': (status: CallStatus) => void;
-  'call:closing': (value: {
-    callId: string;
-    reason: 'demo_sales_handoff';
-  }) => void;
+  'call:closing': (value: { callId: string; reason: CallEndReason }) => void;
   'transcript:update': (update: TranscriptUpdate) => void;
   'voice:session:error': (error: VoiceSessionError) => void;
   'voice:session:warning': (warning: VoiceSessionWarning) => void;
@@ -100,7 +100,7 @@ export type AudioErrorCode =
 export type AudioAck =
   { ok: true } | { ok: false; code: AudioErrorCode; message: string };
 export type AudioOutputEvent =
-  | { type: 'closing'; callId: string; reason: 'demo_sales_handoff' }
+  | { type: 'closing'; callId: string; reason: CallEndReason }
   | { type: 'start'; stream: AudioStream }
   | { type: 'chunk'; chunk: AudioChunk }
   | { type: 'end'; streamId: string }

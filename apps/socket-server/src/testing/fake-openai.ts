@@ -87,6 +87,11 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
                 'get_available_appointments',
               ].includes(name),
             );
+        if (
+          !names.length &&
+          toolNames.includes('check_sales_director_availability')
+        )
+          names.push('check_sales_director_availability');
         const calls = names.map((name, index) => ({
           type: 'function_call',
           call_id: `${id}-${index}`,
@@ -182,7 +187,7 @@ export async function createFakeOpenAI(options: { toolCalls?: boolean } = {}) {
       const closingDisclosure =
         typeof event.response?.instructions === 'string' &&
         event.response.instructions.startsWith(
-          'Speak exactly this JSON string as the closing demo disclosure.',
+          'Speak exactly this JSON string as the server-owned closing message.',
         );
       if (
         options.toolCalls &&

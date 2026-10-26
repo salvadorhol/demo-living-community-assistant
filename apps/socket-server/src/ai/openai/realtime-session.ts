@@ -93,7 +93,7 @@ export function createRealtimeVoice(
         send,
         fail,
         toolsChanged: updateTools,
-        onClosing() {
+        onClosing(action) {
           if (closing) return;
           closing = true;
           send({
@@ -105,7 +105,7 @@ export function createRealtimeVoice(
               audio: { input: { turn_detection: null } },
             },
           });
-          closingStarted?.();
+          closingStarted?.(action);
         },
       });
       function updateTools() {

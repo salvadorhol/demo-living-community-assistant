@@ -30,9 +30,10 @@ Tours use the explicitly configured `appConfig/appointments` Firestore slots,
 interpreted in America/New_York, with thirty-minute durations. The admin page
 edits a JSON array of date/time objects; the service returns future slots in
 chronological order without generating business hours or asking for a date first.
-Appointment inquiries skip the sales-director lookup. Other substantive inquiries
-retain that lookup through the prompt; the unconditional forced tool choice is
-removed so appointments can be retrieved immediately. Selected slots are
+The first substantive inquiry, including tours, attempts the sales-director lookup.
+Community, floor-plan, and appointment tools remain gated until that attempt
+finishes, including failure. Then appointment options are retrieved immediately.
+Configured slots may include Sundays. Selected slots are
 revalidated transactionally when a pending request is saved and do not reserve
 inventory.
 
@@ -94,3 +95,31 @@ dementia/large-dog questions retain qualifications; contact spelling and digits
 confirmed before saves; corrections, interruptions and failures do not claim
 success; a returning identity gets a first-name greeting; tour/callback success
 is described only as a pending request.
+
+## Reviewed prompt publication and closing
+
+The canonical six-section prompt is `apps/socket-server/src/ai/sophie-prompt.ts`.
+Existing Firestore prompts are never overwritten by startup. Review the current
+revision in `/admin`, then explicitly publish the full reviewed prompt:
+
+```sh
+node tools/publish-sophie-prompt.mjs --project <project-id> --expected-revision <current-revision>
+```
+
+The transaction refuses stale revisions and is idempotent when content matches.
+For an emulator, explicitly set `FIRESTORE_EMULATOR_HOST` and use a demo project.
+New calls load the published prompt. Do not use the legacy appointment phrase
+migration for customized six-section prompts.
+
+Foreground tool descriptions require a brief courtesy notice, followed immediately
+by invocation without awaiting a visitor reply. Background profile prefetch is exempt.
+A successful empty appointment lookup forces the disclosed handoff; lookup errors
+remain errors. A bounded extra terminal execution remains available after the
+four normal tool executions per turn.
+
+`end_call` handles explicit visitor stops immediately, without courtesy or goodbye,
+clearing capture and playback before saving. Natural completion follows the final
+anything-else question and a negative answer, then plays a server-owned localized
+goodbye before saving (15-second fallback). Saved end reasons are
+`visitor_requested` and `conversation_complete`. Existing contact/new-turn
+confirmation and same-token uncertain-write recovery remain required.

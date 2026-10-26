@@ -79,7 +79,7 @@ export function createAvailabilityTools(
       name: 'get_available_appointments',
       functionName: 'getAvailableAppointments',
       description:
-        'Immediately retrieve all configured tour appointment options when a visitor asks about appointments or tours. No date or preference question is needed first. Present only returned options. Read-only; does not book or reserve an appointment.',
+        'After the initial sales-director attempt, immediately retrieve all configured tour appointment options when asked about appointments or tours. No date or preference question is needed first. Present only returned options. Read-only; does not book or reserve an appointment.',
       valid: isAppointments,
     },
     {

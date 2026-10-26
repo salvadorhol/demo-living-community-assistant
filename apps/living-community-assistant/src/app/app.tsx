@@ -241,7 +241,9 @@ export function Workspace() {
             aria-label="Microphone status"
           >
             {voiceStatus.state === 'closing'
-              ? 'Finishing the simulated sales transfer…'
+              ? call?.endReason === 'demo_sales_handoff'
+                ? 'Finishing the simulated sales transfer…'
+                : 'Ending the call…'
               : pending
                 ? voiceStatus.state === 'requesting permission'
                   ? 'Waiting for microphone permission…'
@@ -261,19 +263,26 @@ export function Workspace() {
           {call && (
             <p role="status" aria-label="Call status">
               {call.state === 'closing'
-                ? 'Demo sales transfer · Ending call…'
+                ? call.endReason === 'demo_sales_handoff'
+                  ? 'Demo sales transfer · Ending call…'
+                  : 'Ending call…'
                 : call.state === 'saved' &&
                     call.endReason === 'demo_sales_handoff'
                   ? 'Demo transfer complete. Call ended and saved.'
-                  : call.state === 'saving'
-                    ? 'Saving call…'
-                    : call.state === 'saved'
-                      ? 'Call saved'
-                      : call.state === 'failed'
-                        ? 'Save failed'
-                        : call.state === 'paused'
-                          ? 'Call paused'
-                          : 'Call active'}
+                  : call.state === 'saved' &&
+                      ['visitor_requested', 'conversation_complete'].includes(
+                        call.endReason ?? '',
+                      )
+                    ? 'Call ended and saved.'
+                    : call.state === 'saving'
+                      ? 'Saving call…'
+                      : call.state === 'saved'
+                        ? 'Call saved'
+                        : call.state === 'failed'
+                          ? 'Save failed'
+                          : call.state === 'paused'
+                            ? 'Call paused'
+                            : 'Call active'}
             </p>
           )}
           {call?.message && <p role="alert">{call.message}</p>}

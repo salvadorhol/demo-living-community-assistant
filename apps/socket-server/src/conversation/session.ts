@@ -6,6 +6,7 @@ import { ConfigurationError, voiceError } from '../configuration-error.ts';
 import { silentLogger } from '../logger.ts';
 import type {
   AudioOutputEvent,
+  CallEndReason,
   TranscriptUpdate,
   AudioPlaybackProgress,
   AudioAck,
@@ -128,6 +129,7 @@ export function createConversationSession({
   let call: SavedCall | undefined;
   let closing:
     | {
+        reason: CallEndReason;
         streamId?: string;
         bytes: number;
         playedMs: number;
@@ -143,7 +145,7 @@ export function createConversationSession({
       closing.bytes > 0 &&
       closing.playedMs >= Math.floor(closing.bytes / 48)
     )
-      endBackground('demo_sales_handoff');
+      endBackground(closing.reason);
   }
   let ending: Promise<void> | undefined;
   let limit: ReturnType<typeof setTimeout> | undefined;
@@ -164,7 +166,7 @@ export function createConversationSession({
     const current = call;
     if (!current) return;
     if (closing) {
-      reason = 'demo_sales_handoff';
+      reason = closing.reason;
       clearTimeout(closing.timer);
       closing = undefined;
     }
@@ -325,30 +327,31 @@ export function createConversationSession({
             callId: current.id,
             logger: logger.child({ callId: current.id }),
             transcript: (value) => acceptTranscript(value, owner),
-            closing() {
+            closing(
+              action = { reason: 'demo_sales_handoff', immediate: false },
+            ) {
               if (owner !== generation || !call || closing || ending) return;
               invalidateObservation();
               closing = {
+                reason: action.reason,
                 bytes: 0,
                 playedMs: 0,
                 delivered: false,
                 generated: false,
-                timer: setTimeout(
-                  () => endBackground('demo_sales_handoff'),
-                  15000,
-                ),
+                timer: setTimeout(() => endBackground(action.reason), 15000),
               };
               closing.timer.unref();
               events.output({
                 type: 'closing',
                 callId: call.id,
-                reason: 'demo_sales_handoff',
+                reason: action.reason,
               });
               events.status({
                 callId: call.id,
                 state: 'closing',
-                endReason: 'demo_sales_handoff',
+                endReason: action.reason,
               });
+              if (action.immediate) endBackground(action.reason);
             },
             closingResponseDone() {
               if (owner !== generation || !closing) return;

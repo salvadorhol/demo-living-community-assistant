@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type {
   ContactInformationResponse,
   ContactProfile,
+  AvailableAppointmentsResponse,
 } from '@living-community-assistant/types';
 import { createAvailabilityTools, isAppointments } from './availability.ts';
 import {
@@ -12,6 +13,7 @@ import {
   isEmptyArguments,
   ToolError,
   type ToolDefinition,
+  type TerminalAction,
 } from './contracts.ts';
 
 type Invoke = ReturnType<typeof createFirebaseInvoker>;
@@ -93,7 +95,10 @@ export function createSophieTools(
   const loader = dependencies.loader ?? createContactLoader(invoke);
   let known: ContactInformationResponse = { profile: {} };
   let appointmentsChecked = false;
-  let closingMessage: string | undefined;
+  let terminalAction: TerminalAction | undefined;
+  let salesChecked = false;
+  let emptyHandoffTurn: number | undefined;
+  let availabilityGeneration = 0;
   let turn = 0;
   type Draft = {
     token: string;
@@ -103,48 +108,111 @@ export function createSophieTools(
     value: Record<string, unknown>;
   };
   let draft: Draft | undefined;
-  const offered = new Map<string, string>();
+  const offered = new Map<
+    string,
+    AvailableAppointmentsResponse['appointments'][number]
+  >();
+  let offeredTimeZone = 'America/New_York';
   const ready = (kind: Draft['kind']) =>
     !!draft &&
     draft.kind === kind &&
     draft.turn < turn &&
     Date.now() - draft.created <= 300_000;
-  const prepare = (kind: Draft['kind'], value: Record<string, unknown>) => {
+  const prepare = (
+    kind: Draft['kind'],
+    value: Record<string, unknown>,
+    readBack = value,
+  ) => {
     draft = { token: randomUUID(), created: Date.now(), turn, kind, value };
     return {
       confirmationToken: draft.token,
-      valuesToReadBack: value,
+      valuesToReadBack: readBack,
       nextStep:
-        'Read these values back and wait for the visitor to explicitly confirm in a new turn. Nothing has been saved.',
+        'Read the exact human-readable values back, without speaking tokens or slot IDs, and ask one confirmation question. Wait for explicit confirmation in a new user turn. Then give a brief saving notice and save using this existing token; do not prepare unchanged data again. Nothing has been saved.',
     };
   };
   const validatedInvoke: Invoke = async (name, args, signal) => {
+    const generation =
+      name === 'getAvailableAppointments'
+        ? ++availabilityGeneration
+        : undefined;
     try {
       const value = await invoke(name, args, signal);
-      if (name === 'getAvailableAppointments') {
+      if (
+        name === 'getAvailableAppointments' &&
+        generation === availabilityGeneration &&
+        !signal.aborted
+      ) {
         offered.clear();
         appointmentsChecked = false;
+        emptyHandoffTurn = undefined;
         if (isAppointments(value)) {
           appointmentsChecked = true;
-          for (const slot of value.appointments)
-            offered.set(slot.id, slot.date);
+          offeredTimeZone = value.timeZone;
+          if (!value.appointments.length) emptyHandoffTurn = turn;
+          for (const slot of value.appointments) offered.set(slot.id, slot);
         }
       }
       return value;
     } catch (error) {
-      if (name === 'getAvailableAppointments') {
+      if (
+        name === 'getAvailableAppointments' &&
+        generation === availabilityGeneration &&
+        !signal.aborted
+      ) {
         offered.clear();
         appointmentsChecked = false;
+        emptyHandoffTurn = undefined;
       }
       throw error;
+    } finally {
+      if (name === 'checkSalesDirectorAvailability') salesChecked = true;
     }
   };
   const extra: ToolDefinition[] = [
     {
+      name: 'end_call',
+      description:
+        'End the current call. For an explicit request to stop/end/stop talking, use visitor_requested immediately with no courtesy notice, goodbye, or extra question. For conversation_complete, first ask whether anything else is needed and wait for the visitor to indicate no; then give the brief please-wait notice and invoke immediately. The server handles goodbye playback for natural closing and saves the call. Never use a demo transfer for ordinary call ending.',
+      terminal: true,
+      write: true,
+      parameters: shape({
+        reason: {
+          type: 'string',
+          enum: ['visitor_requested', 'conversation_complete'],
+        },
+        language: { type: 'string', enum: ['en', 'es'] },
+      }),
+      validateArguments: (v: unknown) =>
+        object(v) &&
+        Object.keys(v).length === 2 &&
+        ['visitor_requested', 'conversation_complete'].includes(
+          String(v.reason),
+        ) &&
+        ['en', 'es'].includes(String(v.language)),
+      async execute(args) {
+        const immediate = args.reason === 'visitor_requested';
+        terminalAction = {
+          reason: immediate ? 'visitor_requested' : 'conversation_complete',
+          immediate,
+          ...(immediate
+            ? {}
+            : {
+                message:
+                  args.language === 'es'
+                    ? 'Gracias por llamar a ACME Senior Living. Hasta luego.'
+                    : 'Thank you for calling ACME Senior Living. Goodbye.',
+              }),
+        };
+        return { endingCall: true };
+      },
+    },
+    {
       name: 'simulate_sales_handoff',
       description:
         'After a successful appointment lookup, use only when no future slots exist or the visitor explicitly cannot attend any offered option. Simulates sales assistance and ends this demo call after a fixed disclosure. No actual transfer or callback is made. Never use for a failed lookup.',
-      enabled: () => appointmentsChecked && !closingMessage,
+      enabled: () => appointmentsChecked && !terminalAction,
+      terminal: true,
       write: true,
       parameters: shape({ language: { type: 'string', enum: ['en', 'es'] } }),
       validateArguments: (v: unknown) =>
@@ -152,10 +220,20 @@ export function createSophieTools(
         Object.keys(v).length === 1 &&
         ['en', 'es'].includes(String(v.language)),
       async execute(args) {
-        closingMessage =
+        const empty = offered.size === 0;
+        const message =
           args.language === 'es'
-            ? 'Para esta demostración, simularé conectarle con nuestro departamento de ventas para recibir ayuda adicional. La llamada finalizará ahora.'
-            : 'For this demo, I will simulate connecting you with our sales department for additional assistance. The call will now end.';
+            ? empty
+              ? 'No hay citas para visitas disponibles en este momento. Para esta demostración, simularé una transferencia a ventas y finalizaré la llamada.'
+              : 'Como esos horarios no le sirven, simularé una transferencia a ventas para esta demostración y finalizaré la llamada.'
+            : empty
+              ? 'No tour appointments are available right now. For this demo, I will simulate a sales transfer and end the call.'
+              : 'Since those times do not work for you, I will simulate a sales transfer for this demo and end the call.';
+        terminalAction = {
+          reason: 'demo_sales_handoff',
+          immediate: false,
+          message,
+        };
         return { simulated: true, endingCall: true };
       },
     },
@@ -289,7 +367,14 @@ export function createSophieTools(
             ? {
                 kind: 'tour',
                 slotId: args.slotId,
-                date: offered.get(args.slotId as string),
+                date: offered.get(args.slotId as string)?.date,
+              }
+            : { kind: 'callback', preferredTime: args.preferredTime },
+          args.kind === 'tour'
+            ? {
+                ...offered.get(args.slotId as string),
+                kind: 'tour',
+                timeZone: offeredTimeZone,
               }
             : { kind: 'callback', preferredTime: args.preferredTime },
         );
@@ -370,12 +455,34 @@ export function createSophieTools(
     },
     onUserTurn() {
       turn++;
+      emptyHandoffTurn = undefined;
     },
     greeting: () =>
       known.profile.firstName
-        ? `Welcome back, ${known.profile.firstName}. This is Sophie, ACME Senior Living's virtual assistant. This conversation is being recorded. How may I help you today?`
-        : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual assistant. This conversation is being recorded. How may I help you today?',
-    toolChoice: () => 'auto',
-    closingMessage: () => closingMessage,
+        ? `Welcome back, ${known.profile.firstName}. This is Sophie, ACME Senior Living's virtual sales assistant. This conversation is being recorded. How may I help you today?`
+        : 'Hi, this is ACME Senior Living. My name is Sophie, your virtual sales assistant. This conversation is being recorded. How may I help you today?',
+    toolCourtesy: true,
+    toolAllowed: (name) => {
+      if (
+        emptyHandoffTurn === turn &&
+        name !== 'simulate_sales_handoff' &&
+        name !== 'end_call'
+      )
+        return false;
+      if (
+        [
+          'get_community_information',
+          'get_available_floor_plans',
+          'get_available_appointments',
+        ].includes(name)
+      )
+        return salesChecked;
+      return true;
+    },
+    toolChoice: () =>
+      emptyHandoffTurn === turn
+        ? { type: 'function', name: 'simulate_sales_handoff' }
+        : 'auto',
+    terminalAction: () => terminalAction,
   });
 }

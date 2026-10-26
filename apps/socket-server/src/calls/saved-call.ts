@@ -95,7 +95,12 @@ export class SavedCall {
       state,
       transcription: this.transcription,
       ...(message ? { message } : {}),
-      ...(this.closed && this.reason === 'demo_sales_handoff'
+      ...(this.closed &&
+      [
+        'demo_sales_handoff',
+        'visitor_requested',
+        'conversation_complete',
+      ].includes(this.reason)
         ? { endReason: this.reason }
         : {}),
     });

@@ -1,5 +1,6 @@
 import type {
   AudioOutputEvent,
+  CallEndReason,
   AudioPlaybackProgress,
   TranscriptUpdate,
 } from '@living-community-assistant/types';
@@ -40,7 +41,7 @@ export interface VoiceAgentFactory {
     responseStarted?(responseId: string): void;
     turnEnded?(): void;
     degraded?(): void;
-    closing?(): void;
+    closing?(action?: { reason: CallEndReason; immediate: boolean }): void;
     closingResponseDone?(): void;
     metadata?(info: Record<string, string>): void;
     output(event: AudioOutputEvent): void;

@@ -54,6 +54,7 @@ export class VoiceSession {
     this.unsubscribe = connection.onAudio((event) => {
       if (event.type === 'closing') {
         this.closing = true;
+        if (event.reason === 'visitor_requested') this.playback.clear();
         const input = this.active;
         this.active = undefined;
         if (input) {

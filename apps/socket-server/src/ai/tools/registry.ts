@@ -3,6 +3,7 @@ import {
   ToolError,
   type ToolContext,
   type ToolDefinition,
+  type TerminalAction,
 } from './contracts.ts';
 
 export const TOOL_LIMITS = {
@@ -30,7 +31,9 @@ export function createToolRegistry(
     bootstrap?(signal: AbortSignal): Promise<void>;
     onUserTurn?(): void;
     greeting?(): string;
-    closingMessage?(): string | undefined;
+    terminalAction?(): TerminalAction | undefined;
+    toolAllowed?(name: string): boolean;
+    toolCourtesy?: boolean;
     toolChoice?(): 'auto' | { type: 'function'; name: string };
   } = {},
 ) {
@@ -53,15 +56,23 @@ export function createToolRegistry(
   }
   return {
     ...lifecycle,
+    isTerminal: (name: string) => entries.get(name)?.terminal === true,
     isWrite: (name: string) => entries.get(name)?.write === true,
     get definitions() {
-      if (lifecycle.closingMessage?.()) return [];
+      if (lifecycle.terminalAction?.()) return [];
       return definitions
-        .filter((entry) => !entry.enabled || entry.enabled())
+        .filter(
+          (entry) =>
+            (!lifecycle.toolAllowed || lifecycle.toolAllowed(entry.name)) &&
+            (!entry.enabled || entry.enabled()),
+        )
         .map(({ name, description, parameters }) => ({
           type: 'function' as const,
           name,
-          description,
+          description:
+            lifecycle.toolCourtesy && name !== 'end_call'
+              ? `Before calling, say a short warm please-wait notice in the visitor's language. Invoke immediately without waiting for a reply or adding a pause. Never speak the tool name. ${description}`
+              : description,
           parameters,
         }));
     },
@@ -82,8 +93,9 @@ export function createToolRegistry(
         signal.throwIfAborted();
         const definition = entries.get(call.name);
         if (
-          lifecycle.closingMessage?.() ||
+          lifecycle.terminalAction?.() ||
           !definition ||
+          (lifecycle.toolAllowed && !lifecycle.toolAllowed(call.name)) ||
           (definition.enabled && !definition.enabled())
         )
           throw new ToolError('UNKNOWN_TOOL', 'That tool is not available.');
@@ -129,6 +141,14 @@ export function createToolRegistry(
             signal.throwIfAborted();
             const execute = () => {
               signal.throwIfAborted();
+              if (
+                lifecycle.terminalAction?.() ||
+                (lifecycle.toolAllowed && !lifecycle.toolAllowed(call.name))
+              )
+                throw new ToolError(
+                  'UNKNOWN_TOOL',
+                  'That tool is not available.',
+                );
               return definition.execute(args as Record<string, unknown>, {
                 ...context,
                 toolCallId: call.call_id,
@@ -170,6 +190,18 @@ export function createToolRegistry(
                 'TOOL_FAILED',
                 'Availability lookup failed. Please try again.',
               );
+        const uncertainWrite =
+          entries.get(call.name)?.write &&
+          !entries.get(call.name)?.terminal &&
+          [
+            'UPSTREAM_ERROR',
+            'TOOL_TIMEOUT',
+            'TOOL_FAILED',
+            'INVALID_RESULT',
+          ].includes(failure.code);
+        const message = uncertainWrite
+          ? 'The confirmed write may have completed, but its outcome could not be verified. Retry with the same confirmation token; do not prepare unchanged values again or claim the write definitely failed.'
+          : failure.message;
         log.warn(
           {
             event: 'tool.failed',
@@ -179,7 +211,7 @@ export function createToolRegistry(
           },
           'Voice tool failed',
         );
-        return toolFailure(failure.code, failure.message);
+        return toolFailure(failure.code, message);
       } finally {
         clearTimeout(timer);
         if (abort) signal.removeEventListener('abort', abort);

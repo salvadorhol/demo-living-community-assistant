@@ -1,3 +1,4 @@
+import type { TerminalAction } from '../tools/contracts.ts';
 import { randomUUID } from 'node:crypto';
 import type { AppLogger } from '../../logger.ts';
 import {
@@ -23,7 +24,7 @@ interface ToolCallsOptions {
   send(event: object): void;
   fail(error: unknown): void;
   toolsChanged?(): void;
-  onClosing?(): void;
+  onClosing?(action: TerminalAction): void;
 }
 const isCall = (value: unknown): value is FunctionCall => {
   if (!value || typeof value !== 'object') return false;
@@ -46,6 +47,7 @@ export class ToolCalls {
   private continuation?: string;
   private acceptedContinuation?: string;
   private used = 0;
+  private terminalReserveUsed = false;
   private handled = new Set<string>();
   private seen = new Set<string>();
   constructor(options: ToolCallsOptions) {
@@ -64,7 +66,10 @@ export class ToolCalls {
     this.responseId = undefined;
     this.continuation = undefined;
     this.acceptedContinuation = undefined;
-    if (resetBudget) this.used = 0;
+    if (resetBudget) {
+      this.used = 0;
+      this.terminalReserveUsed = false;
+    }
   }
   acceptResponse(id: string, metadata?: Record<string, string>): boolean {
     if (metadata?.toolCycleId) {
@@ -88,6 +93,10 @@ export class ToolCalls {
       this.seen.add(call.call_id);
       return true;
     });
+    // Explicit termination has priority over other actions in the same response.
+    calls.sort(
+      (a, b) => Number(b.name === 'end_call') - Number(a.name === 'end_call'),
+    );
     if (!calls.length || !this.options.canContinue()) return;
     this.pending?.abort();
     const owner = new AbortController();
@@ -105,13 +114,19 @@ export class ToolCalls {
           const index = cursor++;
           const call = calls[index];
           if (this.used >= TOOL_LIMITS.maxCallsPerTurn) {
-            results[index] = toolFailure(
-              'TOOL_BUDGET_EXCEEDED',
-              'The lookup limit for this turn was reached.',
-            );
-            continue;
-          }
-          this.used++;
+            if (
+              !this.terminalReserveUsed &&
+              this.registry.isTerminal(call.name)
+            ) {
+              this.terminalReserveUsed = true;
+            } else {
+              results[index] = toolFailure(
+                'TOOL_BUDGET_EXCEEDED',
+                'The lookup limit for this turn was reached.',
+              );
+              continue;
+            }
+          } else this.used++;
           results[index] = await this.registry.execute(call, {
             uid: this.options.uid,
             callId: this.options.callId,
@@ -146,8 +161,15 @@ export class ToolCalls {
       this.options.toolsChanged?.();
       this.continuation = randomUUID();
       this.acceptedContinuation = undefined;
-      const closingMessage = this.registry.closingMessage?.();
-      if (closingMessage) this.options.onClosing?.();
+      const terminal = this.registry.terminalAction?.();
+      if (terminal) this.options.onClosing?.(terminal);
+      if (terminal?.immediate) return;
+      const closingMessage = terminal?.message;
+      const choice = this.registry.toolChoice?.() ?? 'auto';
+      const reservedChoice =
+        typeof choice === 'object' &&
+        this.registry.isTerminal(choice.name) &&
+        !this.terminalReserveUsed;
       this.options.send({
         type: 'response.create',
         response: {
@@ -155,9 +177,9 @@ export class ToolCalls {
           ...(closingMessage
             ? {
                 tool_choice: 'none',
-                instructions: `Speak exactly this JSON string as the closing demo disclosure. Do not call tools or ask any questions.\n${JSON.stringify(closingMessage)}`,
+                instructions: `Speak exactly this JSON string as the server-owned closing message. Do not call tools or ask any questions.\n${JSON.stringify(closingMessage)}`,
               }
-            : this.used >= TOOL_LIMITS.maxCallsPerTurn
+            : this.used >= TOOL_LIMITS.maxCallsPerTurn && !reservedChoice
               ? { tool_choice: 'none' }
               : { tool_choice: this.registry.toolChoice?.() ?? 'auto' }),
         },

@@ -386,7 +386,7 @@ test('edits appointment JSON and completes a disclosed sales handoff after playb
       .getByRole('button', { name: 'Start session', exact: true })
       .click();
     await expect(
-      visitor.getByText(/For this demo, I will simulate connecting you/),
+      visitor.getByText(/For this demo, I will simulate a sales transfer/),
     ).toBeVisible({ timeout: 15000 });
     await expect(
       visitor.getByRole('status', { name: 'Call status' }),
